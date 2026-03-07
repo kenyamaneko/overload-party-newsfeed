@@ -19,15 +19,17 @@ Cloud Run Job
 ## ディレクトリ構成
 
 ```
-cmd/
-  main.go                  # エントリポイント・ジョブオーケストレーション
-internal/
-  fetcher/fetcher.go       # RSS 取得 (gofeed)
-  storage/gcs.go           # GCS 生データ保存・読み取り
-  repository/pg_news_repo.go  # PostgreSQL CRUD
-  summarizer/summarizer.go    # Vertex AI Gemini 呼び出し
-  model/article.go         # NewsArticle 型定義
-Dockerfile                 # マルチステージビルド (distroless)
+main.py                        # エントリポイント
+newsfeed/
+  config.py                    # Config dataclass・環境変数読み込み
+  model.py                     # FetchedItem / NewsArticle / SummarizeResult
+  fetcher.py                   # RSS 取得 (feedparser)
+  repository.py                # PostgreSQL CRUD (psycopg2)
+  storage.py                   # GCS 生データ保存・読み取り
+  summarizer.py                # Vertex AI Gemini 呼び出し
+  runner.py                    # ジョブオーケストレーション
+Dockerfile                     # マルチステージビルド (python:3.12-slim)
+requirements.txt
 ```
 
 ## 環境変数
@@ -42,11 +44,13 @@ Dockerfile                 # マルチステージビルド (distroless)
 ## ローカル実行
 
 ```bash
+pip install -r requirements.txt
+
 export DATABASE_URL="postgres://..."
 export GCS_BUCKET="overload-party-dev-newsfeed"
 export GCP_PROJECT="overload-party-dev"
 
-go run ./cmd/main.go
+python main.py
 ```
 
 ## デプロイ

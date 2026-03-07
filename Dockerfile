@@ -1,12 +1,14 @@
-FROM golang:1.25-alpine AS builder
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+FROM python:3.12-slim
 
 WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+COPY --from=builder /install /usr/local
+COPY main.py .
+COPY newsfeed/ newsfeed/
 
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /newsfeed ./cmd/main.go
-
-FROM gcr.io/distroless/static-debian12
-COPY --from=builder /newsfeed /newsfeed
-ENTRYPOINT ["/newsfeed"]
+CMD ["python", "main.py"]

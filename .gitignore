@@ -1,9 +1,11 @@
-# Binaries
-/newsfeed
-
 # Environment
 .env
 .env.*
 
-# Go
-vendor/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+.venv/
