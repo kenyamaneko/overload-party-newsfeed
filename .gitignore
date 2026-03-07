@@ -1,0 +1,9 @@
+# Binaries
+/newsfeed
+
+# Environment
+.env
+.env.*
+
+# Go
+vendor/
