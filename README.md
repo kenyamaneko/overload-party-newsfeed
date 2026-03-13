@@ -59,8 +59,8 @@ Cloud Run Job と Cloud Scheduler は `overload-party-infra` の `modules/newsfe
 
 ```bash
 # コンテナイメージのビルド・プッシュ
-docker build -t asia-northeast1-docker.pkg.dev/overload-party-shared/overload-party/newsfeed:latest .
-docker push asia-northeast1-docker.pkg.dev/overload-party-shared/overload-party/newsfeed:latest
+docker build -t asia-northeast1-docker.pkg.dev/keyandnotes-platform/overload-party/newsfeed:latest .
+docker push asia-northeast1-docker.pkg.dev/keyandnotes-platform/overload-party/newsfeed:latest
 
 # インフラ適用
 cd ../overload-party-infra/environments/dev
