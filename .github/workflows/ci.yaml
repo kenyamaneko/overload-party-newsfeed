@@ -13,9 +13,10 @@ permissions:
 env:
   REGION: asia-northeast1
   REGISTRY: asia-northeast1-docker.pkg.dev
-  PROJECT_ID: keyandnotes-platform
-  REPOSITORY: overload-party
+  AR_PROJECT: keyandnotes-platform
+  AR_REPOSITORY: overload-party
   IMAGE_NAME: newsfeed
+  DEPLOY_PROJECT: overload-party-dev
 
 jobs:
   build-and-push:
@@ -29,14 +30,28 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.CI_SERVICE_ACCOUNT }}
+          token_format: access_token
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
 
       - name: Build and push
         run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}
+          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}
           docker build -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest .
           docker push ${IMAGE}:${{ github.sha }}
           docker push ${IMAGE}:latest
+
+      - name: Update Cloud Run Job
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          gcloud run jobs update newsfeed-job \
+            --region ${{ env.REGION }} \
+            --project ${{ env.DEPLOY_PROJECT }} \
+            --image "${IMAGE}" \
+            --quiet
