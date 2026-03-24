@@ -101,7 +101,7 @@ def _retry_unsummarized(
         logger.error("list_unsummarized failed: %s", e)
         return
 
-    succeeded = failed = 0
+    success_count = error_count = 0
     for article in articles:
         content = ""
         if article.raw_gcs_path:
@@ -111,13 +111,15 @@ def _retry_unsummarized(
                 logger.error(
                     "retry: load_content failed for %s: %s", article.article_id, e
                 )
+                error_count += 1
+                continue
 
         try:
             result = summarizer.summarize(article.title, content)
             repo.update_summary(article.article_id, result.summary, result.tags)
-            succeeded += 1
+            success_count += 1
         except Exception as e:
-            logger.error("retry summarize failed for %s: %s", article.article_id, e)
-            failed += 1
+            logger.error("retry: summarize failed for %s: %s", article.article_id, e)
+            error_count += 1
 
-    logger.info("step 3: retried=%d errors=%d", succeeded, failed)
+    logger.info("step 3: success=%d errors=%d", success_count, error_count)
