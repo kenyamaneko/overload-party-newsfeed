@@ -45,4 +45,6 @@ class GCSStorage:
 
         blob = self._client.bucket(self._bucket).blob(obj_path)
         payload = json.loads(blob.download_as_text())
-        return payload.get("content", "")
+        if "content" not in payload:
+            raise KeyError(f"'content' key missing in GCS object: {gcs_path}")
+        return payload["content"]

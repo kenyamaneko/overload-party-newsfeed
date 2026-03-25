@@ -40,13 +40,8 @@ def _fetch_and_store(
     skipped = inserted = summarized = errors = 0
 
     for item in items:
-        try:
-            if repo.exists(item.source_url):
-                skipped += 1
-                continue
-        except Exception as e:
-            logger.error("dedup check failed for %s: %s", item.source_url, e)
-            errors += 1
+        if repo.exists(item.source_url):
+            skipped += 1
             continue
 
         article_id = str(ULID())
@@ -68,12 +63,7 @@ def _fetch_and_store(
             fetched_at=datetime.now(timezone.utc),
         )
 
-        try:
-            repo.insert(article)
-        except Exception as e:
-            logger.error("repo.insert failed for %s: %s", item.source_url, e)
-            errors += 1
-            continue
+        repo.insert(article)
         inserted += 1
 
         try:

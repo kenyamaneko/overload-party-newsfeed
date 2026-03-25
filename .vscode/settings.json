@@ -1,0 +1,26 @@
+{
+  "workbench.colorCustomizations": {
+    // --- ベースの背景色 ---
+    "editor.background": "#1a1b26",
+    "sideBar.background": "#16161e",
+    "sideBar.foreground": "#a9b1d6",
+
+    // --- タイトルバー（アクティブ）：気品あるサファイアブルー ---
+    "titleBar.activeBackground": "#3d5afe", 
+    "titleBar.activeForeground": "#ffffff", // 青には白文字が最高に映えます
+
+    // --- タイトルバー（非アクティブ） ---
+    "titleBar.inactiveBackground": "#3d5afe88", 
+    "titleBar.inactiveForeground": "#ffffff88",
+
+    // --- ステータスバー（下のバー） ---
+    "statusBar.background": "#3d5afe",
+    "statusBar.foreground": "#ffffff",
+
+    // --- その他のアクセント ---
+    "activityBar.foreground": "#3d5afe",      
+    "activityBarBadge.background": "#3d5afe", 
+    "editorCursor.foreground": "#3d5afe",      
+    "tab.activeBorder": "#3d5afe"             
+  }
+}
