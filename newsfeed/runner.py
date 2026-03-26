@@ -40,14 +40,20 @@ def _fetch_and_store(
     skipped = inserted = summarized = errors = 0
 
     for item in items:
-        if repo.exists(item.source_url):
-            skipped += 1
+        try:
+            if repo.exists(item.source_url):
+                skipped += 1
+                continue
+        except Exception as e:
+            logger.error("repo.exists failed for %s: %s", item.source_url, e)
+            errors += 1
             continue
 
         article_id = str(ULID())
+        fetched_at = datetime.now(timezone.utc)
 
         try:
-            gcs_path = gcs.save(article_id, item)
+            gcs_path = gcs.save(article_id, item, fetched_at)
         except Exception as e:
             logger.error("gcs.save failed for %s: %s", item.source_url, e)
             errors += 1
@@ -60,11 +66,16 @@ def _fetch_and_store(
             title=item.title,
             raw_gcs_path=gcs_path,
             published_at=item.published_at,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=fetched_at,
         )
 
-        repo.insert(article)
-        inserted += 1
+        try:
+            repo.insert(article)
+            inserted += 1
+        except Exception as e:
+            logger.error("repo.insert failed for %s: %s", item.source_url, e)
+            errors += 1
+            continue
 
         try:
             result = summarizer.summarize(item.title, item.content)
@@ -85,24 +96,25 @@ def _retry_unsummarized(
 ) -> None:
     logger.info("step 3: retrying unsummarized articles")
 
-    try:
-        articles = repo.list_unsummarized(limit=50)
-    except Exception as e:
-        logger.error("list_unsummarized failed: %s", e)
-        return
+    articles = repo.list_unsummarized(limit=50)
 
     success_count = error_count = 0
     for article in articles:
-        content = ""
-        if article.raw_gcs_path:
-            try:
-                content = gcs.load_content(article.raw_gcs_path)
-            except Exception as e:
-                logger.error(
-                    "retry: load_content failed for %s: %s", article.article_id, e
-                )
-                error_count += 1
-                continue
+        if not article.raw_gcs_path:
+            logger.error(
+                "retry: raw_gcs_path is empty for %s, skipping", article.article_id
+            )
+            error_count += 1
+            continue
+
+        try:
+            content = gcs.load_content(article.raw_gcs_path)
+        except Exception as e:
+            logger.error(
+                "retry: load_content failed for %s: %s", article.article_id, e
+            )
+            error_count += 1
+            continue
 
         try:
             result = summarizer.summarize(article.title, content)

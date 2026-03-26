@@ -1,12 +1,9 @@
 import json
-import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 from google.cloud import storage as gcs_lib
 
 from newsfeed.model import FetchedItem
-
-logger = logging.getLogger(__name__)
 
 
 class GCSStorage:
@@ -14,8 +11,8 @@ class GCSStorage:
         self._client = gcs_lib.Client()
         self._bucket = bucket
 
-    def save(self, article_id: str, item: FetchedItem) -> str:
-        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    def save(self, article_id: str, item: FetchedItem, fetched_at: datetime) -> str:
+        date = fetched_at.strftime("%Y-%m-%d")
         obj_path = f"raw/{item.source}/{date}/{article_id}.json"
 
         payload: dict = {
@@ -24,7 +21,7 @@ class GCSStorage:
             "source_url": item.source_url,
             "title": item.title,
             "content": item.content,
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "fetched_at": fetched_at.isoformat(),
         }
         if item.published_at is not None:
             payload["published_at"] = item.published_at.isoformat()
@@ -46,5 +43,5 @@ class GCSStorage:
         blob = self._client.bucket(self._bucket).blob(obj_path)
         payload = json.loads(blob.download_as_text())
         if "content" not in payload:
-            raise KeyError(f"'content' key missing in GCS object: {gcs_path}")
+            raise ValueError(f"'content' key missing in GCS object: {gcs_path}")
         return payload["content"]

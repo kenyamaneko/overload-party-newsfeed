@@ -51,6 +51,7 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
 
 
 def _entry_content(entry, title: str) -> str:
+    # feedparser の content は [{"type": "...", "value": "本文"}] 形式のリスト
     content_list = entry.get("content")
     if content_list:
         return content_list[0].get("value", "")

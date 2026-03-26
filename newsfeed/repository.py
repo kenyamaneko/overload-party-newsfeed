@@ -1,10 +1,6 @@
-import logging
-
 import psycopg2
 
 from newsfeed.model import NewsArticle
-
-logger = logging.getLogger(__name__)
 
 
 class NewsRepo:

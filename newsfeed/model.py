@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 
@@ -26,7 +26,11 @@ class NewsArticle:
     tags: list[str] = field(default_factory=list)
     raw_gcs_path: Optional[str] = None
     published_at: Optional[datetime] = None
-    fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    fetched_at: datetime = field(default=None)
+
+    def __post_init__(self) -> None:
+        if self.fetched_at is None:
+            raise ValueError("fetched_at is required")
 
 
 @dataclass(frozen=True)

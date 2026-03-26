@@ -11,4 +11,7 @@ COPY --from=builder /install /usr/local
 COPY main.py .
 COPY newsfeed/ newsfeed/
 
+RUN useradd --system --no-create-home appuser
+USER appuser
+
 CMD ["python", "main.py"]

@@ -26,6 +26,8 @@ class Summarizer:
             prompt,
             generation_config=GenerationConfig(response_mime_type="application/json"),
         )
+        if not response.text:
+            raise ValueError("summarizer: Vertex AI returned empty response")
         return _parse_response(response.text)
 
 
