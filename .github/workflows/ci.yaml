@@ -19,27 +19,31 @@ env:
   DEPLOY_PROJECT: overload-party-dev
 
 jobs:
-  lint-and-test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check newsfeed/ tests/
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
-
-      - name: Lint
-        run: ruff check .
-
-      - name: Test
+      - name: Run tests
         run: pytest tests/ -v
 
   build-and-push:
     if: github.ref == 'refs/heads/main'
-    needs: lint-and-test
+    needs: [lint, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

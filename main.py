@@ -10,6 +10,7 @@ logging.basicConfig(
 
 
 def main() -> None:
+    """newsfeed パイプラインのエントリポイントです。"""
     try:
         run()
     except Exception as e:

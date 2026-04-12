@@ -13,11 +13,14 @@ _MAX_CONTENT_CHARS = 4000
 
 
 class Summarizer:
+    """Vertex AI を使って記事を要約しタグ付けします。"""
+
     def __init__(self, project: str, location: str):
         vertexai.init(project=project, location=location)
         self._model = GenerativeModel(_MODEL)
 
     def summarize(self, title: str, content: str) -> SummarizeResult:
+        """記事タイトルと本文から要約とタグを生成します。"""
         if len(content) > _MAX_CONTENT_CHARS:
             content = content[:_MAX_CONTENT_CHARS] + "..."
 

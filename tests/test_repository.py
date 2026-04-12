@@ -1,8 +1,6 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-import pytest
-
 from newsfeed.model import NewsArticle
 from newsfeed.repository import NewsRepo
 
@@ -11,6 +9,9 @@ DT = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
 def _make_repo():
     conn = MagicMock()
+    # psycopg2 の connection はトランザクションのコンテキストマネージャとして使える
+    conn.__enter__.return_value = conn
+    conn.__exit__.return_value = False
     cur = conn.cursor.return_value.__enter__.return_value
     repo = NewsRepo(conn)
     return repo, conn, cur
@@ -22,97 +23,46 @@ def _make_article(**overrides):
         source="test-source",
         source_url="https://example.com/1",
         title="Test Title",
+        summary="test summary",
+        tags=["ai"],
+        raw_gcs_path="gs://bucket/raw/path.json",
         fetched_at=DT,
     )
     defaults.update(overrides)
     return NewsArticle(**defaults)
 
 
-# ---------- TestExists ----------
-
-
-class TestExists:
-    def test_returns_true_when_row_exists(self):
-        repo, _conn, cur = _make_repo()
-        cur.fetchone.return_value = (True,)
-
-        assert repo.exists("https://example.com/1") is True
-
-    def test_returns_false_when_no_row(self):
-        repo, _conn, cur = _make_repo()
-        cur.fetchone.return_value = (False,)
-
-        assert repo.exists("https://example.com/1") is False
-
-
-# ---------- TestInsert ----------
-
-
 class TestInsert:
-    def test_calls_commit_after_execute(self):
+    def test_returns_true_when_row_inserted(self):
+        repo, _conn, cur = _make_repo()
+        cur.fetchone.return_value = ("art-1",)
+
+        assert repo.insert(_make_article()) is True
+
+    def test_returns_false_on_conflict(self):
+        repo, _conn, cur = _make_repo()
+        # ON CONFLICT DO NOTHING + RETURNING で行が返らない
+        cur.fetchone.return_value = None
+
+        assert repo.insert(_make_article()) is False
+
+    def test_uses_transaction_context(self):
         repo, conn, cur = _make_repo()
-        article = _make_article()
+        cur.fetchone.return_value = ("art-1",)
 
-        repo.insert(article)
+        repo.insert(_make_article())
 
-        conn.commit.assert_called_once()
+        # `with conn:` で成功時にコミットされる — enter/exit の呼び出しを検証
+        conn.__enter__.assert_called_once()
+        conn.__exit__.assert_called_once()
 
-    def test_on_conflict_does_not_raise(self):
+    def test_query_targets_newsfeed_schema(self):
         repo, _conn, cur = _make_repo()
-        article = _make_article()
+        cur.fetchone.return_value = ("art-1",)
 
-        repo.insert(article)  # should not raise
+        repo.insert(_make_article())
 
-
-# ---------- TestUpdateSummary ----------
-
-
-class TestUpdateSummary:
-    def test_raises_when_no_rows_updated(self):
-        repo, _conn, cur = _make_repo()
-        cur.rowcount = 0
-
-        with pytest.raises(ValueError, match="not found"):
-            repo.update_summary("art-missing", "summary", ["tag"])
-
-    def test_commits_on_success(self):
-        repo, conn, cur = _make_repo()
-        cur.rowcount = 1
-
-        repo.update_summary("art-1", "summary", ["tag"])
-
-        conn.commit.assert_called_once()
-
-
-# ---------- TestListUnsummarized ----------
-
-
-class TestListUnsummarized:
-    def test_returns_articles_from_rows(self):
-        repo, _conn, cur = _make_repo()
-        cur.fetchall.return_value = [
-            ("id-1", "src-a", "https://a.com", "Title A", "gcs/a", DT, DT),
-            ("id-2", "src-b", "https://b.com", "Title B", "gcs/b", DT, DT),
-        ]
-
-        articles = repo.list_unsummarized()
-
-        assert len(articles) == 2
-        a1, a2 = articles
-
-        assert a1.article_id == "id-1"
-        assert a1.source == "src-a"
-        assert a1.source_url == "https://a.com"
-        assert a1.title == "Title A"
-        assert a1.raw_gcs_path == "gcs/a"
-        assert a1.published_at == DT
-        assert a1.fetched_at == DT
-
-        assert a2.article_id == "id-2"
-        assert a2.source == "src-b"
-
-    def test_returns_empty_list_when_no_rows(self):
-        repo, _conn, cur = _make_repo()
-        cur.fetchall.return_value = []
-
-        assert repo.list_unsummarized() == []
+        sql = cur.execute.call_args[0][0]
+        assert "newsfeed.news_articles" in sql
+        assert "ON CONFLICT (source_url) DO NOTHING" in sql
+        assert "RETURNING article_id" in sql

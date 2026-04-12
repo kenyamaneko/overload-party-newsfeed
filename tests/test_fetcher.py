@@ -2,7 +2,15 @@ import time
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from newsfeed.fetcher import FeedSource, _entry_content, _parse_date, fetch_all
+import pytest
+
+from newsfeed.fetcher import (
+    FeedSource,
+    FetchError,
+    _entry_content,
+    _parse_date,
+    fetch_all,
+)
 
 
 class TestEntryContent:
@@ -66,6 +74,35 @@ class TestFetchAll:
         sources = [FeedSource("src1", "http://example.com/feed")]
         result = fetch_all(sources)
         assert result == []
+
+    @patch("newsfeed.fetcher.feedparser.parse")
+    def test_raises_when_all_sources_fail(self, mock_parse):
+        mock_parse.side_effect = Exception("network error")
+        sources = [
+            FeedSource("bad1", "http://bad1.example.com/feed"),
+            FeedSource("bad2", "http://bad2.example.com/feed"),
+        ]
+        with pytest.raises(FetchError, match="all 2 feed sources failed"):
+            fetch_all(sources)
+
+    @patch("newsfeed.fetcher.feedparser.parse")
+    def test_does_not_raise_when_at_least_one_source_succeeds(self, mock_parse):
+        valid_entry = {
+            "link": "http://example.com/good",
+            "title": "Good Article",
+            "content": [{"value": "body"}],
+            "published_parsed": time.struct_time((2025, 1, 1, 0, 0, 0, 0, 1, 0)),
+        }
+        mock_parse.side_effect = [
+            Exception("network error"),
+            self._make_feed([valid_entry]),
+        ]
+        sources = [
+            FeedSource("bad", "http://bad.example.com/feed"),
+            FeedSource("good", "http://good.example.com/feed"),
+        ]
+        result = fetch_all(sources)
+        assert len(result) == 1
 
     @patch("newsfeed.fetcher.feedparser.parse")
     def test_continues_on_feed_parse_error(self, mock_parse):

@@ -5,7 +5,7 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class FetchedItem:
-    """RSS フィードから取得した生の記事データ。"""
+    """RSS フィードから取得した生の記事データを保持します。"""
 
     source: str
     source_url: str
@@ -16,7 +16,7 @@ class FetchedItem:
 
 @dataclass
 class NewsArticle:
-    """DB に保存する記事エンティティ。"""
+    """DB に保存する記事エンティティを表します。"""
 
     article_id: str
     source: str
@@ -35,7 +35,7 @@ class NewsArticle:
 
 @dataclass(frozen=True)
 class SummarizeResult:
-    """Vertex AI から返却された要約結果。"""
+    """Vertex AI から返却された要約結果を保持します。"""
 
     summary: str
     tags: list[str]

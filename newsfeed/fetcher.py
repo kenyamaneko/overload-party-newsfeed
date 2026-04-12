@@ -11,8 +11,18 @@ from newsfeed.model import FetchedItem
 logger = logging.getLogger(__name__)
 
 
+class FetchError(Exception):
+    """全フィードソースの取得に失敗した場合に送出されます。
+
+    Cloud Run Job の終了コードに伝播し、GCP コンソール上で
+    全面障害を検知可能にします。
+    """
+
+
 @dataclass(frozen=True)
 class FeedSource:
+    """RSS フィードソースの名前と URL を保持します。"""
+
     name: str
     url: str
 
@@ -26,7 +36,10 @@ DEFAULT_SOURCES: list[FeedSource] = [
 
 
 def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
+    """全ソースから RSS フィードを取得し FetchedItem のリストを返します。"""
     items: list[FetchedItem] = []
+    success_count = 0
+    failure_count = 0
     for src in sources:
         try:
             feed = feedparser.parse(src.url)
@@ -45,8 +58,16 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
                 ))
                 count += 1
             logger.info("fetcher: %s — fetched %d items", src.name, count)
+            success_count += 1
         except Exception as e:
             logger.error("fetcher: failed to parse feed %s (%s): %s", src.name, src.url, e)
+            failure_count += 1
+
+    if success_count == 0 and failure_count > 0:
+        raise FetchError(
+            f"all {failure_count} feed sources failed; no items fetched"
+        )
+
     return items
 
 

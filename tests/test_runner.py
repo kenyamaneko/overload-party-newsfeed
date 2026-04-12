@@ -1,126 +1,123 @@
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from newsfeed.model import FetchedItem, NewsArticle
-from newsfeed.runner import _fetch_and_store, _retry_unsummarized
+from newsfeed.model import FetchedItem, SummarizeResult
+from newsfeed.runner import _fetch_and_store
+
+
+def _item(n: int) -> FetchedItem:
+    return FetchedItem(
+        source="aws",
+        source_url=f"https://example.com/{n}",
+        title=f"Article {n}",
+        content=f"content{n}",
+    )
 
 
 class TestFetchAndStore:
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_continues_when_repo_exists_raises(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = [
-            FetchedItem(
-                source="aws",
-                source_url="https://example.com/1",
-                title="Article 1",
-                content="content1",
-            ),
-            FetchedItem(
-                source="aws",
-                source_url="https://example.com/2",
-                title="Article 2",
-                content="content2",
-            ),
-        ]
+    def test_new_insert_logs_as_new(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1)]
         mock_ulid.return_value = "fake-ulid"
 
         repo = MagicMock()
-        repo.exists.side_effect = [Exception("db down"), False]
+        repo.insert.return_value = True  # actually inserted
 
         gcs = MagicMock()
         gcs.save.return_value = "gs://bucket/raw/path.json"
 
         summarizer = MagicMock()
-        summarizer.summarize.return_value = MagicMock(
-            summary="sum", tags=["ai"]
-        )
+        summarizer.summarize.return_value = SummarizeResult(summary="sum", tags=["ai"])
 
         _fetch_and_store(repo, gcs, summarizer)
 
-        # First item's exists() failed, so insert should only be called for second item
+        assert repo.insert.call_count == 1
+        # パイプライン順序: GCS → summarize → insert
+        article = repo.insert.call_args[0][0]
+        assert article.summary == "sum"
+        assert article.tags == ["ai"]
+        assert article.raw_gcs_path == "gs://bucket/raw/path.json"
+
+    @patch("newsfeed.runner.fetch_all")
+    @patch("newsfeed.runner.ULID")
+    def test_duplicate_skipped_does_not_re_summarize_next_time(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1), _item(2)]
+        mock_ulid.return_value = "fake-ulid"
+
+        repo = MagicMock()
+        # 1 件目は重複（conflict）、2 件目は新規
+        repo.insert.side_effect = [False, True]
+
+        gcs = MagicMock()
+        gcs.save.return_value = "gs://bucket/raw/path.json"
+
+        summarizer = MagicMock()
+        summarizer.summarize.return_value = SummarizeResult(summary="sum", tags=["ai"])
+
+        _fetch_and_store(repo, gcs, summarizer)
+
+        assert repo.insert.call_count == 2
+
+    @patch("newsfeed.runner.fetch_all")
+    @patch("newsfeed.runner.ULID")
+    def test_gcs_failure_skips_insert(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1), _item(2)]
+        mock_ulid.return_value = "fake-ulid"
+
+        repo = MagicMock()
+        repo.insert.return_value = True
+
+        gcs = MagicMock()
+        gcs.save.side_effect = [Exception("gcs down"), "gs://bucket/raw/path.json"]
+
+        summarizer = MagicMock()
+        summarizer.summarize.return_value = SummarizeResult(summary="sum", tags=["ai"])
+
+        _fetch_and_store(repo, gcs, summarizer)
+
+        # GCS 成功分のみ insert に到達
+        assert repo.insert.call_count == 1
+        # GCS 失敗分は summarizer もスキップされる
+        assert summarizer.summarize.call_count == 1
+
+    @patch("newsfeed.runner.fetch_all")
+    @patch("newsfeed.runner.ULID")
+    def test_summarizer_failure_skips_insert(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1), _item(2)]
+        mock_ulid.return_value = "fake-ulid"
+
+        repo = MagicMock()
+        repo.insert.return_value = True
+
+        gcs = MagicMock()
+        gcs.save.return_value = "gs://bucket/raw/path.json"
+
+        summarizer = MagicMock()
+        summarizer.summarize.side_effect = [
+            Exception("vertex down"),
+            SummarizeResult(summary="sum", tags=["ai"]),
+        ]
+
+        _fetch_and_store(repo, gcs, summarizer)
+
+        # 1 件目は summarizer 失敗 → insert なし。2 件目のみ insert される
         assert repo.insert.call_count == 1
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_continues_when_repo_insert_raises(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = [
-            FetchedItem(
-                source="aws",
-                source_url="https://example.com/1",
-                title="Article 1",
-                content="content1",
-            ),
-            FetchedItem(
-                source="aws",
-                source_url="https://example.com/2",
-                title="Article 2",
-                content="content2",
-            ),
-        ]
+    def test_insert_failure_does_not_stop_pipeline(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1), _item(2)]
         mock_ulid.return_value = "fake-ulid"
 
         repo = MagicMock()
-        repo.exists.return_value = False
-        repo.insert.side_effect = [Exception("db write fail"), None]
+        repo.insert.side_effect = [Exception("db down"), True]
 
         gcs = MagicMock()
         gcs.save.return_value = "gs://bucket/raw/path.json"
 
         summarizer = MagicMock()
-        summarizer.summarize.return_value = MagicMock(
-            summary="sum", tags=["ai"]
-        )
+        summarizer.summarize.return_value = SummarizeResult(summary="sum", tags=["ai"])
 
         _fetch_and_store(repo, gcs, summarizer)
 
-        # insert was called for both items
         assert repo.insert.call_count == 2
-        # summarizer only called for second item (first insert failed -> continue)
-        assert summarizer.summarize.call_count == 1
-
-
-class TestRetryUnsummarized:
-    def test_skips_empty_raw_gcs_path(self):
-        repo = MagicMock()
-        repo.list_unsummarized.return_value = [
-            NewsArticle(
-                article_id="id-1",
-                source="aws",
-                source_url="https://example.com/1",
-                title="No path article",
-                raw_gcs_path="",
-                fetched_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            ),
-        ]
-
-        gcs = MagicMock()
-        summarizer = MagicMock()
-
-        _retry_unsummarized(repo, gcs, summarizer)
-
-        gcs.load_content.assert_not_called()
-        summarizer.summarize.assert_not_called()
-
-    def test_skips_when_load_content_fails(self):
-        repo = MagicMock()
-        repo.list_unsummarized.return_value = [
-            NewsArticle(
-                article_id="id-2",
-                source="gcp",
-                source_url="https://example.com/2",
-                title="Broken GCS",
-                raw_gcs_path="gs://bucket/raw/file.json",
-                fetched_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            ),
-        ]
-
-        gcs = MagicMock()
-        gcs.load_content.side_effect = Exception("gcs read error")
-
-        summarizer = MagicMock()
-
-        _retry_unsummarized(repo, gcs, summarizer)
-
-        gcs.load_content.assert_called_once()
-        summarizer.summarize.assert_not_called()

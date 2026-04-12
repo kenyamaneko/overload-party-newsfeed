@@ -7,11 +7,14 @@ from newsfeed.model import FetchedItem
 
 
 class GCSStorage:
+    """GCS への記事データの保存と読み込みを提供します。"""
+
     def __init__(self, bucket: str):
         self._client = gcs_lib.Client()
         self._bucket = bucket
 
     def save(self, article_id: str, item: FetchedItem, fetched_at: datetime) -> str:
+        """記事の生データを GCS に保存し、gs:// パスを返します。"""
         date = fetched_at.strftime("%Y-%m-%d")
         obj_path = f"raw/{item.source}/{date}/{article_id}.json"
 
@@ -33,6 +36,7 @@ class GCSStorage:
         return f"gs://{self._bucket}/{obj_path}"
 
     def load_content(self, gcs_path: str) -> str:
+        """GCS パスから記事の content フィールドを読み込みます。"""
         prefix = f"gs://{self._bucket}/"
         if not gcs_path.startswith(prefix):
             raise ValueError(
