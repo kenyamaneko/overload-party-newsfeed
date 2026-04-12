@@ -10,6 +10,10 @@ __pycache__/
 dist/
 .venv/
 
+# Node
+node_modules/
+package-lock.json
+
 # IDE / tools
 .claude/
 .vscode/
