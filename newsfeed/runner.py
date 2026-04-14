@@ -34,7 +34,7 @@ def run(cfg: Config | None = None) -> None:
     try:
         repo = NewsRepo(conn)
         gcs = GCSStorage(cfg.gcs_bucket)
-        summarizer = Summarizer(cfg.gcp_project, cfg.vertex_location)
+        summarizer = Summarizer(cfg.google_cloud_project, cfg.vertex_location)
 
         _fetch_and_store(repo, gcs, summarizer)
     finally:

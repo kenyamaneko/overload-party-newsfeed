@@ -44,7 +44,7 @@ Cloud Scheduler から2時間おきに起動され、クラウド各社の公式
 |--------|-----|
 | `aws`  | `https://aws.amazon.com/blogs/aws/feed/` |
 | `azure`| `https://azure.microsoft.com/en-us/blog/feed/` |
-| `gcp`  | `https://cloud.google.com/blog/feed` |
+| `google-cloud` | `https://cloud.google.com/blog/feed` |
 | `oci`  | `https://blogs.oracle.com/cloud-infrastructure/rss` |
 
 ---
@@ -55,7 +55,7 @@ Cloud Scheduler から2時間おきに起動され、クラウド各社の公式
 
 | フィールド | 型 | 説明 |
 |-----------|----|----|
-| source | string | "aws" / "azure" / "gcp" / "oci" |
+| source | string | "aws" / "azure" / "google-cloud" / "oci" |
 | source_url | string | `item.link` を優先、なければ `item.guid` |
 | title | string | |
 | content | string | `item.content` → `item.description` → "Title: ...\n\nPublished: ..." の順でフォールバック |
@@ -157,7 +157,7 @@ JSONのみを返してください。
 |--------|------|-----------|------|
 | `DATABASE_URL` | ✅ | - | PostgreSQL 接続文字列 |
 | `GCS_BUCKET` | ✅ | - | 生データ保存先バケット名 |
-| `GCP_PROJECT` | ✅ | - | GCP プロジェクト ID |
+| `GOOGLE_CLOUD_PROJECT` | ✅ | - | Google Cloud プロジェクト ID |
 | `VERTEX_LOCATION` | | `us-central1` | Vertex AI リージョン |
 
 ---

@@ -10,7 +10,7 @@ Cloud Scheduler が 2 時間おきに Cloud Run Job をトリガーし、以下�
 1. RSS フィード取得 (fetch_all)
    ├─ AWS   https://aws.amazon.com/blogs/aws/feed/
    ├─ Azure https://azure.microsoft.com/en-us/blog/feed/
-   ├─ GCP   https://cloud.google.com/blog/feed
+   ├─ Google Cloud   https://cloud.google.com/blog/feed
    └─ OCI   https://blogs.oracle.com/cloud-infrastructure/rss
            │
            ▼ list[FetchedItem]

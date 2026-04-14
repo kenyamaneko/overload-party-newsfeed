@@ -2,7 +2,7 @@ CREATE SCHEMA IF NOT EXISTS newsfeed;
 
 CREATE TABLE IF NOT EXISTS newsfeed.news_articles (
     article_id   VARCHAR(26) PRIMARY KEY,               -- ULID
-    source       VARCHAR(20) NOT NULL,                   -- ソース種別（AWS / Azure / GCP / Oracle 等）
+    source       VARCHAR(20) NOT NULL,                   -- ソース種別（AWS / Azure / Google Cloud / Oracle 等）
     source_url   TEXT        NOT NULL UNIQUE,            -- 元記事 URL（UNIQUE で重複取得を防止）
     title        TEXT        NOT NULL,                   -- 記事タイトル
     summary      TEXT,                                   -- AI 生成の要約

@@ -21,7 +21,7 @@ newsfeed スキーマはクラウドニュース記事の収集結果を格納�
 | カラム名 | 型 | Nullable | 説明 |
 |---|---|---|---|
 | `article_id` | VARCHAR(26) | No | ULID |
-| `source` | VARCHAR(20) | No | ソース種別（AWS / Azure / GCP / Oracle 等） |
+| `source` | VARCHAR(20) | No | ソース種別（AWS / Azure / Google Cloud / Oracle 等） |
 | `source_url` | TEXT | No | 元記事 URL（UNIQUE で重複取得を防止） |
 | `title` | TEXT | No | 記事タイトル |
 | `summary` | TEXT | Yes | AI 生成の要約 |

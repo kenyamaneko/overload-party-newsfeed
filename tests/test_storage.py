@@ -44,7 +44,7 @@ class TestSave:
     def test_uses_provided_fetched_at(self, mock_gcs_client):
         storage = GCSStorage("my-bucket")
         item = FetchedItem(
-            source="gcp",
+            source="google-cloud",
             source_url="https://example.com/post2",
             title="Another Article",
             content="Some content",
@@ -56,7 +56,7 @@ class TestSave:
         assert "2025-07-20" in result
 
         mock_blob = mock_gcs_client.bucket("my-bucket").blob(
-            "raw/gcp/2025-07-20/article-456.json"
+            "raw/google-cloud/2025-07-20/article-456.json"
         )
         call_args = mock_blob.upload_from_string.call_args
         payload = json.loads(call_args[0][0])

@@ -9,7 +9,7 @@ Cloud Scheduler (2時間おき)
   │
   ▼
 Newsfeed (この Cloud Run Job)
-  ├─ RSS (AWS / Azure / GCP / OCI 公式ブログ)
+  ├─ RSS (AWS / Azure / Google Cloud / OCI 公式ブログ)
   ├─ GCS (生データ保存: raw/{source}/{date}/{ulid}.json)
   ├─ Vertex AI Gemini 2.0 Flash (日本語要約 + タグ抽出)
   └─ PostgreSQL (newsfeed スキーマ所有: news_articles)
@@ -29,7 +29,7 @@ Newsfeed (この Cloud Run Job)
 |---|---|---|---|
 | `DATABASE_URL` | はい | --- | PostgreSQL 接続文字列 |
 | `GCS_BUCKET` | はい | --- | 生データ保存先 GCS バケット名 |
-| `GCP_PROJECT` | はい | --- | GCP プロジェクト ID (Vertex AI 用) |
+| `GOOGLE_CLOUD_PROJECT` | はい | --- | Google Cloud プロジェクト ID (Vertex AI 用) |
 | `VERTEX_LOCATION` | いいえ | `us-central1` | Vertex AI リージョン |
 
 必須変数が未設定なら起動時に即 fail する。

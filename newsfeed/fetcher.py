@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class FetchError(Exception):
     """全フィードソースの取得に失敗した場合に送出されます。
 
-    Cloud Run Job の終了コードに伝播し、GCP コンソール上で
+    Cloud Run Job の終了コードに伝播し、Google Cloud コンソール上で
     全面障害を検知可能にします。
     """
 
@@ -30,7 +30,7 @@ class FeedSource:
 DEFAULT_SOURCES: list[FeedSource] = [
     FeedSource("aws", "https://aws.amazon.com/blogs/aws/feed/"),
     FeedSource("azure", "https://azure.microsoft.com/en-us/blog/feed/"),
-    FeedSource("gcp", "https://cloud.google.com/blog/feed"),
+    FeedSource("google-cloud", "https://cloud.google.com/blog/feed"),
     FeedSource("oci", "https://blogs.oracle.com/cloud-infrastructure/rss"),
 ]
 
