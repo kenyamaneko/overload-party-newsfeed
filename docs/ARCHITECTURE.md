@@ -1,73 +1,52 @@
 # Newsfeed サービス設計
 
-このドキュメントは newsfeed サービスの内部動作を説明する。サービスの概要・環境変数は [README.md](../README.md) を参照。
+本ドキュメントは **コードを読んでも一見しては分からない設計意図** だけを残す。フロー順序・環境変数一覧・RSS URL 等は [README.md](../README.md) と実装を一次情報とする。
 
-## パイプライン
+## Newsfeed の責務境界
 
-Cloud Scheduler が 2 時間おきに Cloud Run Job をトリガーし、以下のパイプラインを 1 回実行する:
+newsfeed は **RSS 取得と `news-article-collected` への publish** のみを担う Cloud Run Job。以下の副作用は**持たない**:
 
-```
-1. RSS フィード取得 (fetch_all)
-   ├─ AWS   https://aws.amazon.com/blogs/aws/feed/
-   ├─ Azure https://azure.microsoft.com/en-us/blog/feed/
-   ├─ Google Cloud   https://cloud.google.com/blog/feed
-   └─ OCI   https://blogs.oracle.com/cloud-infrastructure/rss
-           │
-           ▼ list[FetchedItem]
-2. 記事ごとのループ (per article, 独立)
-   ├─ 2a. GCS upload (raw/{source}/{date}/{ulid}.json)
-   ├─ 2b. Vertex AI Gemini 2.0 Flash で日本語要約 + タグ抽出
-   └─ 2c. DB INSERT (newsfeed.news_articles)
-           │
-           ▼
-3. 集計ログ (inserted / duplicates / errors)
-```
+- DB 書き込み（news サービスが所有、ADR-019）
+- AI 要約生成（news の ingest 側で Vertex AI を実行、ADR-019）
+- 生 JSON アーカイブ（ADR-019 で廃止）
 
-### 各記事の処理はアトミック
+責務縮退により newsfeed の障害面は「RSS 取得」と「Pub/Sub publish」の 2 点に閉じる。Vertex AI quota や Cloud SQL 可用性は newsfeed の動作に影響しない。
 
-1 記事の処理 (GCS upload -> 要約 -> DB INSERT) のいずれかのステップが失敗した場合、その記事の DB 行は作成されない。`summary IS NULL` の部分行は存在しない。失敗した記事は次回実行時に `source_url` の UNIQUE 制約 + `ON CONFLICT DO NOTHING` により冪等に再取得される。
+## 冪等性は news に委譲する
 
-### Vertex AI 要約
+newsfeed はローカル dedup を持たない。同一 `source_url` の記事が複数回 publish されうる設計で、重複排除は news 側の `ON CONFLICT DO NOTHING`（親記事・翻訳の両方）に委ねる。
 
-- モデル: `gemini-2.0-flash-001`
-- 入力: 記事タイトル + 本文 (4000 文字で切り詰め)
-- 出力: JSON `{"summary": "...", "tags": [...]}`
-- タグは `compute / network / storage / database / ai / security / serverless / container / devops / pricing` から選択
-- `response_mime_type="application/json"` で JSON 出力を強制
+ローカル dedup を持たせない理由:
 
-## 冪等性
+- dedup 状態を永続化する先を newsfeed から消せる（GCS も廃止）
+- 2 時間周期・1 回あたり数十件の規模では、news 側 dedup のコストが無視できる
+- Vertex AI 呼び出しコストは news 側で発生するため、newsfeed 再実行では増えない
 
-`INSERT ... ON CONFLICT (source_url) DO NOTHING RETURNING article_id` を使用する。
+## body はプレーンテキストで送る
 
-- `RETURNING` が行を返す: 新規挿入 -> inserted カウント
-- `RETURNING` が空: `source_url` が既存 -> duplicate カウント (no-op)
+RSS の `content:encoded` は HTML タグ付きで、そのまま送ると news の管理 UI（`html/template` ベースのテキストエリア）で運用者が HTML をそのまま読むことになる。また XSS 対策を news 側に寄せる必要が出る。
 
-この設計により:
+newsfeed 側で HTML タグを除去したプレーンテキストに正規化してから publish する。`content:encoded` が無い場合は `description` にフォールバックする（どちらも RSS パーサ (`feedparser`) が取り出せる）。
 
-- 同一記事の再取得は安全 (冪等)
-- check-then-act の TOCTOU 問題が発生しない (単一 SQL 文)
-- 並行ジョブ実行でも整合性が保たれる
+## 障害ドメインを記事単位に閉じる
 
-## 全ソース失敗時の FetchError
-
-`fetch_all` は各 RSS ソースを順に取得し、個別ソースの失敗はログに記録して次のソースに進む。
-
-全ソースが失敗した場合 (success_count == 0 かつ failure_count > 0):
-
-1. `FetchError` 例外を raise
-2. `main.py` が例外を catch し `sys.exit(1)` で終了
-3. Cloud Run Job がジョブ失敗として記録
-
-一部のソースだけ失敗した場合は正常終了する。成功したソースの記事のみ処理し、失敗ソースの記事は次回実行で取得される。
-
-## エラーハンドリング
+個別記事の publish 失敗は **ジョブ全体を中断させない**が、**失敗件数 ≥ 1 ならジョブ終了時に exit 1**。握りつぶしではなく、「1 記事の失敗を他記事の処理に波及させない」という責務境界の話。
 
 | 障害 | 挙動 |
 |---|---|
-| 必須環境変数の未設定 | `load_config()` が `ValueError` を raise -> exit 1 |
-| 全 RSS ソース失敗 | `FetchError` -> exit 1 (Cloud Run Job 失敗) |
-| 個別 RSS ソース失敗 | ログ出力、残りのソースで続行 |
-| GCS upload 失敗 (個別記事) | ログ出力、その記事をスキップ、errors カウント |
-| Vertex AI 要約失敗 (個別記事) | ログ出力、その記事をスキップ、errors カウント |
-| DB INSERT 失敗 (個別記事) | ログ出力、その記事をスキップ、errors カウント |
-| DB 接続失敗 | `psycopg2.connect` が例外 -> exit 1 |
+| 必須環境変数の未設定 | `load_config()` が例外 → exit 1 |
+| Pub/Sub クライアントの初期化失敗 | exit 1 |
+| 全 RSS ソース取得失敗 (`FetchError`) | exit 1（Cloud Run Job 失敗として記録） |
+| 個別 RSS ソース取得失敗 | 構造化ログ出力、残りのソースで続行 |
+| 個別記事の publish 失敗 | 構造化ログ出力 (source / article_id / source_url / エラー)、次の記事へ続行、**errors カウント** |
+| ジョブ終了時に errors ≥ 1 | exit 1（部分成功でも失敗として扱う） |
+
+「失敗したら即中断」ではなく「続行して最後に exit 1」を選ぶ理由:
+
+- 冪等性は news 側の `ON CONFLICT DO NOTHING` で担保されているため、続行しても重複副作用は生まれない
+- 即中断だと特定記事の恒常的失敗が他記事の publish を永久にブロックする。続行派では失敗記事だけが毎周期警告になり、他記事は通り続ける
+- 監視の観点では、exit 1 + 構造化ログで失敗内容（どの記事が何故失敗したか）を可視化できる
+
+## イベント契約
+
+publish する `news-article-collected` ペイロードの仕様は ADR-019 を正とし、news リポの `packages/api-news/ArticleCollectedEvent` 型と一致させる。型パッケージが受信側 (news) に置かれている経緯は ADR-019 §パッケージ境界 を参照。

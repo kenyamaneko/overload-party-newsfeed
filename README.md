@@ -1,46 +1,33 @@
 # overload-party-newsfeed
 
-クラウドニュース収集 Cloud Run Job。AWS / Azure / Google Cloud / Oracle Cloud の公式 RSS フィードを定期取得し、Vertex AI で日本語要約して PostgreSQL に保存する。GKE にはデプロイしない。
+クラウドニュース収集 Cloud Run Job。AWS / Azure / Google Cloud / Oracle Cloud の公式 RSS を定期取得し、`news-article-collected` Pub/Sub トピックへ publish する。DB / GCS / Vertex AI への副作用は持たない。
+
+詳細は [サービス設計書](docs/ARCHITECTURE.md) を参照。
 
 ## サービス間連携
 
 ```
-Cloud Scheduler (2時間おき)
-  │
-  ▼
-Newsfeed (この Cloud Run Job)
-  ├─ RSS (AWS / Azure / Google Cloud / OCI 公式ブログ)
-  ├─ GCS (生データ保存: raw/{source}/{date}/{ulid}.json)
-  ├─ Vertex AI Gemini 2.0 Flash (日本語要約 + タグ抽出)
-  └─ PostgreSQL (newsfeed スキーマ所有: news_articles)
-                │
-                ▼ (read-only)
-          Gateway → GET /api/v1/cloud-news → クライアント
+Cloud Scheduler (2 時間おき)
+  └─ Newsfeed (Cloud Run Job)
+       ├─ RSS (AWS / Azure / Google Cloud / OCI)
+       └─ Pub/Sub publish
+            └─ news-article-collected → News (overload-party-news)
 ```
 
-- REST エンドポイントなし (バッチジョブ)
-- Gateway は `newsfeed.news_articles` を直接 SELECT して配信する
+- REST エンドポイントなし（バッチジョブ）
+- 記事の永続化・要約生成・配信は News サービスの責務 (ADR-019)
 
 ## 環境変数
 
-全て Cloud Run Job の env に設定する。
-
 | 変数名 | 必須 | デフォルト | 説明 |
 |---|---|---|---|
-| `DATABASE_URL` | はい | --- | PostgreSQL 接続文字列 |
-| `GCS_BUCKET` | はい | --- | 生データ保存先 GCS バケット名 |
-| `GOOGLE_CLOUD_PROJECT` | はい | --- | Google Cloud プロジェクト ID (Vertex AI 用) |
-| `VERTEX_LOCATION` | いいえ | `us-central1` | Vertex AI リージョン |
+| `GOOGLE_CLOUD_PROJECT` | はい | --- | Pub/Sub publisher の対象プロジェクト |
+| `PUBSUB_EMULATOR_HOST` | いいえ | --- | ローカル / テスト用の Pub/Sub emulator ホスト |
 
-必須変数が未設定なら起動時に即 fail する。
+必須変数が未設定なら起動時に即 fail する。トピック名は `news-article-collected` に固定（契約定数として実装側でハードコード）。
 
 ## 公開パッケージ
 
-| パッケージ | パス | 用途 |
-|---|---|---|
-| Go module | `packages/newsfeed-constants/` | `CloudNewsSource` enum (aws / google-cloud / azure / oci) |
-| npm | `packages/newsfeed-constants-npm/` | 同等の TypeScript 型 |
+[packages/newsfeed-constants-npm/](packages/newsfeed-constants-npm/) に `CloudNewsSource` の TypeScript 型を npm パッケージとして公開している。Gateway の TS 型定義経由で client が cloud news source 値を型付けするために使う。
 
-Newsfeed 自体は Python であり Go パッケージは消費しない。Gateway + client が source enum を共有するためのパッケージ。
-
-SSoT: `data/newsfeed_constants.yaml` -> `python3 scripts/generate_types.py` で再生成。
+SSoT: `data/newsfeed_constants.yaml` → `python3 scripts/generate_types.py` で再生成。

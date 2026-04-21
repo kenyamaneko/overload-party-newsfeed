@@ -7,40 +7,54 @@ import pytest
 from newsfeed.fetcher import (
     FeedSource,
     FetchError,
-    _entry_content,
+    _entry_body,
+    _html_to_plain_text,
     _parse_date,
     fetch_all,
 )
 
 
-class TestEntryContent:
-    def test_with_content_list(self):
-        entry = {"content": [{"value": "full body text"}]}
-        assert _entry_content(entry, "My Title") == "full body text"
+class TestEntryBody:
+    def test_prefers_content_over_summary(self):
+        entry = {
+            "content": [{"value": "<p>full body</p>"}],
+            "summary": "short summary",
+        }
+        assert _entry_body(entry, "Title") == "full body"
 
-    def test_fallback_to_summary(self):
-        class Entry(dict):
-            def __init__(self, d):
-                super().__init__(d)
-                for k, v in d.items():
-                    setattr(self, k, v)
+    def test_falls_back_to_summary(self):
+        entry = {"summary": "<p>short summary</p>"}
+        assert _entry_body(entry, "Title") == "short summary"
 
-        entry = Entry({"summary": "short summary"})
-        assert _entry_content(entry, "My Title") == "short summary"
+    def test_falls_back_to_title_when_body_empty(self):
+        entry = {}
+        assert _entry_body(entry, "My Title") == "My Title"
 
-    def test_fallback_to_title_published(self):
-        entry = {"published": "2025-01-01"}
-        result = _entry_content(entry, "My Title")
-        assert "Title: My Title" in result
-        assert "Published: 2025-01-01" in result
+    def test_html_is_stripped_to_plain_text(self):
+        entry = {"content": [{"value": "<p>Hello</p><p>World</p>"}]}
+        assert _entry_body(entry, "t") == "Hello\nWorld"
+
+
+class TestHtmlToPlainText:
+    def test_strips_inline_tags(self):
+        assert _html_to_plain_text("<b>bold</b> and <i>italic</i>") == "bold and italic"
+
+    def test_block_tags_produce_line_breaks(self):
+        assert _html_to_plain_text("<p>A</p><p>B</p>") == "A\nB"
+
+    def test_collapses_whitespace(self):
+        assert _html_to_plain_text("<p>  leading trailing  </p>") == "leading trailing"
+
+    def test_decodes_html_entities(self):
+        assert _html_to_plain_text("<p>foo &amp; bar</p>") == "foo & bar"
 
 
 class TestParseDate:
-    def test_with_none(self):
+    def test_returns_none_when_missing(self):
         entry = {}
         assert _parse_date(entry) is None
 
-    def test_with_valid_time_struct(self):
+    def test_parses_time_struct_as_utc(self):
         t = time.struct_time((2025, 6, 15, 12, 0, 0, 6, 166, 0))
         entry = {"published_parsed": t}
         result = _parse_date(entry)
@@ -59,11 +73,8 @@ class TestFetchAll:
 
     @patch("newsfeed.fetcher.feedparser.parse")
     def test_skips_entries_without_source_url(self, mock_parse):
-        mock_parse.return_value = self._make_feed([
-            {"title": "No URL entry"},
-        ])
-        sources = [FeedSource("src1", "http://example.com/feed")]
-        result = fetch_all(sources)
+        mock_parse.return_value = self._make_feed([{"title": "No URL entry"}])
+        result = fetch_all([FeedSource("src1", "http://example.com/feed")])
         assert result == []
 
     @patch("newsfeed.fetcher.feedparser.parse")
@@ -71,8 +82,7 @@ class TestFetchAll:
         mock_parse.return_value = self._make_feed([
             {"link": "http://example.com/1", "title": ""},
         ])
-        sources = [FeedSource("src1", "http://example.com/feed")]
-        result = fetch_all(sources)
+        result = fetch_all([FeedSource("src1", "http://example.com/feed")])
         assert result == []
 
     @patch("newsfeed.fetcher.feedparser.parse")
@@ -86,30 +96,11 @@ class TestFetchAll:
             fetch_all(sources)
 
     @patch("newsfeed.fetcher.feedparser.parse")
-    def test_does_not_raise_when_at_least_one_source_succeeds(self, mock_parse):
+    def test_continues_when_at_least_one_source_succeeds(self, mock_parse):
         valid_entry = {
             "link": "http://example.com/good",
             "title": "Good Article",
-            "content": [{"value": "body"}],
-            "published_parsed": time.struct_time((2025, 1, 1, 0, 0, 0, 0, 1, 0)),
-        }
-        mock_parse.side_effect = [
-            Exception("network error"),
-            self._make_feed([valid_entry]),
-        ]
-        sources = [
-            FeedSource("bad", "http://bad.example.com/feed"),
-            FeedSource("good", "http://good.example.com/feed"),
-        ]
-        result = fetch_all(sources)
-        assert len(result) == 1
-
-    @patch("newsfeed.fetcher.feedparser.parse")
-    def test_continues_on_feed_parse_error(self, mock_parse):
-        valid_entry = {
-            "link": "http://example.com/good",
-            "title": "Good Article",
-            "content": [{"value": "body"}],
+            "content": [{"value": "<p>body</p>"}],
             "published_parsed": time.struct_time((2025, 1, 1, 0, 0, 0, 0, 1, 0)),
         }
         mock_parse.side_effect = [
@@ -124,3 +115,4 @@ class TestFetchAll:
         assert len(result) == 1
         assert result[0].source == "good"
         assert result[0].title == "Good Article"
+        assert result[0].body == "body"

@@ -1,17 +1,14 @@
 import os
 from dataclasses import dataclass
 
-_REQUIRED_VARS = ("DATABASE_URL", "GCS_BUCKET", "GOOGLE_CLOUD_PROJECT")
+_REQUIRED_VARS = ("GOOGLE_CLOUD_PROJECT",)
 
 
 @dataclass(frozen=True)
 class Config:
     """newsfeed パイプラインの実行時設定を保持します。"""
 
-    database_url: str
-    gcs_bucket: str
     google_cloud_project: str
-    vertex_location: str
 
 
 def load_config() -> Config:
@@ -20,8 +17,5 @@ def load_config() -> Config:
     if missing:
         raise ValueError(f"missing required env vars: {missing}")
     return Config(
-        database_url=os.environ["DATABASE_URL"],
-        gcs_bucket=os.environ["GCS_BUCKET"],
         google_cloud_project=os.environ["GOOGLE_CLOUD_PROJECT"],
-        vertex_location=os.environ.get("VERTEX_LOCATION", "us-central1"),
     )

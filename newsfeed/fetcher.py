@@ -2,6 +2,7 @@ import calendar
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from typing import Optional
 
 import feedparser
@@ -53,8 +54,8 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
                     source=src.name,
                     source_url=source_url,
                     title=title,
-                    content=_entry_content(entry, title),
-                    published_at=_parse_date(entry),
+                    body=_entry_body(entry, title),
+                    source_published_at=_parse_date(entry),
                 ))
                 count += 1
             logger.info("fetcher: %s — fetched %d items", src.name, count)
@@ -71,14 +72,20 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
     return items
 
 
-def _entry_content(entry, title: str) -> str:
-    # feedparser の content は [{"type": "...", "value": "本文"}] 形式のリスト
+def _entry_body(entry, title: str) -> str:
+    """RSS エントリから本文をプレーンテキストで取得する。
+
+    content:encoded を優先、無ければ description (summary) を使う。
+    body が空になる場合のみ title で埋める (news 側は body が空文字列のイベントを
+    不正として扱うため)。
+    """
     content_list = entry.get("content")
     if content_list:
-        return content_list[0].get("value", "")
-    if entry.get("summary"):
-        return entry.summary
-    return f"Title: {title}\n\nPublished: {entry.get('published', '')}"
+        html = content_list[0].get("value", "")
+    else:
+        html = entry.get("summary", "")
+    body = _html_to_plain_text(html) if html else ""
+    return body if body else title
 
 
 def _parse_date(entry) -> Optional[datetime]:
@@ -86,3 +93,41 @@ def _parse_date(entry) -> Optional[datetime]:
     if t is None:
         return None
     return datetime.fromtimestamp(calendar.timegm(t), tz=timezone.utc)
+
+
+_BLOCK_TAGS = frozenset({
+    "p", "div", "br", "li", "ul", "ol",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "tr", "pre", "blockquote", "section", "article", "figure", "figcaption",
+})
+
+
+class _PlainTextExtractor(HTMLParser):
+    """HTML をプレーンテキストに変換するパーサ。ブロック要素で改行を挿入する。"""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag in _BLOCK_TAGS:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag) -> None:
+        if tag in _BLOCK_TAGS:
+            self._parts.append("\n")
+
+    def handle_data(self, data) -> None:
+        self._parts.append(data)
+
+    def text(self) -> str:
+        return "".join(self._parts)
+
+
+def _html_to_plain_text(html: str) -> str:
+    """HTML タグを除去し段落区切りを保ったプレーンテキストを返す。"""
+    extractor = _PlainTextExtractor()
+    extractor.feed(html)
+    lines = [line.strip() for line in extractor.text().splitlines()]
+    non_empty = [line for line in lines if line]
+    return "\n".join(non_empty)

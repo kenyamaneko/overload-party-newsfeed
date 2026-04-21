@@ -10,7 +10,6 @@ Outputs (Go — each directory is an independent Go module per ADR-015 Phase 3):
   - packages/game-logic-constants/constants_gen.go
   - packages/ws-constants/constants_gen.go
   - packages/shop-constants/constants_gen.go
-  - packages/newsfeed-constants/constants_gen.go
   - packages/card-types/{card,card_stats,passive_effect,npc_models}_gen.go
   - packages/api-client/{deck,rest_api,ws_messages}_gen.go
   - packages/api-battle-rpc/battle_gateway_rpc_gen.go
@@ -73,7 +72,6 @@ GO_GAME_DESIGN_DIR = PACKAGES_DIR / "game-design-constants"
 GO_GAME_LOGIC_DIR = PACKAGES_DIR / "game-logic-constants"
 GO_WS_DIR = PACKAGES_DIR / "ws-constants"
 GO_SHOP_DIR = PACKAGES_DIR / "shop-constants"
-GO_NEWSFEED_DIR = PACKAGES_DIR / "newsfeed-constants"
 GO_CARD_TYPES_DIR = PACKAGES_DIR / "card-types"
 GO_API_CLIENT_DIR = PACKAGES_DIR / "api-client"
 GO_API_BATTLE_RPC_DIR = PACKAGES_DIR / "api-battle-rpc"
@@ -416,17 +414,6 @@ def generate_go_shop(data):
             continue
         lines.extend(_go_const_block(go_comment, go_prefix, values))
     _write_file(GO_SHOP_DIR / "constants_gen.go", lines)
-
-
-# ─── Go: newsfeed module ───────────────────────────────
-def generate_go_newsfeed(data):
-    lines = _go_header("newsfeed")
-    for yaml_key, go_prefix, go_comment, _, _, _, _ in NEWSFEED_SIMPLE:
-        values = data.get(yaml_key)
-        if values is None:
-            continue
-        lines.extend(_go_const_block(go_comment, go_prefix, values))
-    _write_file(GO_NEWSFEED_DIR / "constants_gen.go", lines)
 
 
 # ─── Generate Go (models) ──────────────────────────────
@@ -1714,9 +1701,6 @@ def main():
     # in this file remain only because they share utility code used by the
     # newsfeed path; they are not invoked from main() anymore.
     newsfeed = _load_yaml(NEWSFEED_YAML)
-
-    generate_go_newsfeed(newsfeed)
-    print("Generated → packages/newsfeed-constants/constants_gen.go", file=sys.stderr)
 
     generate_ts_newsfeed(newsfeed)
     print("Generated → packages/newsfeed-constants-npm/src/index.ts", file=sys.stderr)
