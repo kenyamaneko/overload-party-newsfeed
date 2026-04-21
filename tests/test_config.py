@@ -17,7 +17,8 @@ def _base_env(**overrides) -> dict:
 
 class TestLoadConfigRequired:
     def test_raises_when_google_cloud_project_missing(self):
-        with patch.dict(os.environ, {"APP_ENV": "local", "VERTEX_LOCATION": "us-central1"}, clear=True):
+        env = {"APP_ENV": "local", "VERTEX_LOCATION": "us-central1"}
+        with patch.dict(os.environ, env, clear=True):
             with pytest.raises(ValueError, match="GOOGLE_CLOUD_PROJECT"):
                 load_config()
 
@@ -31,6 +32,35 @@ class TestLoadConfigRequired:
         with patch.dict(os.environ, _base_env(), clear=True):
             with pytest.raises(ValueError, match="APP_ENV"):
                 load_config()
+
+
+class TestAppEnvValidation:
+    def test_accepts_local(self):
+        env = _base_env(APP_ENV="local", UPSTASH_REDIS_URL="redis://localhost:6379/0")
+        with patch.dict(os.environ, env, clear=True):
+            load_config()  # no raise
+
+    @patch("newsfeed.config.SecretAccessor")
+    def test_accepts_production(self, accessor_cls):
+        accessor = MagicMock()
+        accessor.access.side_effect = lambda sid: {
+            "newsfeed-upstash-redis-endpoint": "upstash.example.com:6379",
+            "newsfeed-upstash-redis-password": "s3cr3t",
+        }[sid]
+        accessor_cls.return_value = accessor
+
+        env = _base_env(APP_ENV="production")
+        with patch.dict(os.environ, env, clear=True):
+            load_config()  # no raise
+
+    def test_rejects_intermediate_values_like_dev_or_prod(self):
+        """APP_ENV は local / production の 2 値のみ。dev / stg / prod は弾く
+        (環境差分は GOOGLE_CLOUD_PROJECT で吸収する運用)。"""
+        for invalid in ("dev", "stg", "prod", "staging", "test", ""):
+            env = _base_env(APP_ENV=invalid)
+            with patch.dict(os.environ, env, clear=True):
+                with pytest.raises(ValueError, match="APP_ENV"):
+                    load_config()
 
 
 class TestLoadConfigLocalMode:
@@ -62,7 +92,7 @@ class TestLoadConfigProductionMode:
         }[sid]
         accessor_cls.return_value = accessor
 
-        env = _base_env(APP_ENV="prod")
+        env = _base_env(APP_ENV="production")
         with patch.dict(os.environ, env, clear=True):
             cfg = load_config()
 
@@ -77,7 +107,7 @@ class TestLoadConfigProductionMode:
         }[sid]
         accessor_cls.return_value = accessor
 
-        env = _base_env(APP_ENV="prod")
+        env = _base_env(APP_ENV="production")
         with patch.dict(os.environ, env, clear=True):
             cfg = load_config()
 

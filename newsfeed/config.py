@@ -1,8 +1,12 @@
 """newsfeed パイプラインの実行時設定。
 
-APP_ENV=local のときは env var 直読み、それ以外は GCP Secret Manager から
-Upstash Redis 接続情報を取得する (ADR-020 §Secret Manager)。matchmaking の
-接続パターンに合わせている。
+APP_ENV は 'local' / 'production' の 2 値のみ (matchmaking と同じ)。
+- local: UPSTASH_REDIS_URL を env var から直読み
+- production: GCP Secret Manager から Upstash 接続情報を取得
+
+dev / stg / prod の区別は GOOGLE_CLOUD_PROJECT (別プロジェクト) で吸収し、
+APP_ENV では「Secret Manager を経由するかどうか」だけを切り替える
+(ADR-020 §Secret Manager)。
 """
 import os
 from dataclasses import dataclass
@@ -12,6 +16,10 @@ from newsfeed.secret_manager import SecretAccessor
 
 _REDIS_ENDPOINT_SECRET = "newsfeed-upstash-redis-endpoint"
 _REDIS_PASSWORD_SECRET = "newsfeed-upstash-redis-password"
+
+APP_ENV_LOCAL = "local"
+APP_ENV_PRODUCTION = "production"
+_VALID_APP_ENVS = (APP_ENV_LOCAL, APP_ENV_PRODUCTION)
 
 
 @dataclass(frozen=True)
@@ -33,8 +41,10 @@ def load_config() -> Config:
         raise ValueError("missing required env var: VERTEX_LOCATION")
 
     app_env = os.environ.get("APP_ENV")
-    if not app_env:
-        raise ValueError("missing required env var: APP_ENV (expected 'local' / 'dev' / 'stg' / 'prod')")
+    if app_env not in _VALID_APP_ENVS:
+        raise ValueError(
+            f"APP_ENV must be one of {_VALID_APP_ENVS}, got: {app_env!r}"
+        )
 
     redis_url = _load_redis_url(app_env, project)
 
@@ -46,7 +56,7 @@ def load_config() -> Config:
 
 
 def _load_redis_url(app_env: str, project_id: str) -> str:
-    if app_env == "local":
+    if app_env == APP_ENV_LOCAL:
         url = os.environ.get("UPSTASH_REDIS_URL")
         if not url:
             raise ValueError("missing required env var (APP_ENV=local): UPSTASH_REDIS_URL")

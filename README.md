@@ -23,7 +23,7 @@ Cloud Scheduler (2 時間おき)
 
 | 変数名 | 必須 | 説明 |
 |---|---|---|
-| `APP_ENV` | はい | `local` / `dev` / `stg` / `prod`。`local` 以外は Upstash 接続情報を Secret Manager から取得する |
+| `APP_ENV` | はい | `local` / `production` の 2 値のみ。`production` のとき Upstash 接続情報を Secret Manager から取得する (dev/stg/prod の区別は `GOOGLE_CLOUD_PROJECT` で吸収) |
 | `GOOGLE_CLOUD_PROJECT` | はい | Pub/Sub / Vertex AI / Secret Manager の対象プロジェクト |
 | `VERTEX_LOCATION` | はい | Vertex AI リージョン (例: `us-central1`) |
 | `UPSTASH_REDIS_URL` | `APP_ENV=local` 時のみ | ローカル Valkey の接続 URL (例: `redis://localhost:6379/0`) |
@@ -33,7 +33,7 @@ Cloud Scheduler (2 時間おき)
 
 ## Secret Manager（本番）
 
-本番環境では Upstash Redis 接続情報を以下のシークレットから取得する（`APP_ENV` が `local` 以外のとき）:
+本番環境では Upstash Redis 接続情報を以下のシークレットから取得する（`APP_ENV=production` のとき）:
 
 | Secret ID | 内容 |
 |---|---|
