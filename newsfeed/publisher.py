@@ -2,7 +2,7 @@
 
 トピック名は news リポ (packages/api-news/news.go) の TopicArticleCollected
 と一致させる必要があるが、newsfeed は Go パッケージを consume できないため
-本ファイル内で契約定数としてハードコードする (ADR-019 §パッケージ境界)。
+本ファイル内で契約定数としてハードコードする (ADR-020 §パッケージ境界を継承)。
 """
 import json
 import logging

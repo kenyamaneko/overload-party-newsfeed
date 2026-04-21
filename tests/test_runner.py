@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from newsfeed.model import FetchedItem
+from newsfeed.model import FetchedItem, SummarizeResult
 from newsfeed.runner import PublishError, _fetch_and_publish
 
 
@@ -15,87 +15,131 @@ def _item(n: int) -> FetchedItem:
     )
 
 
+def _summarizer(summary: str = "要約", tags=None) -> MagicMock:
+    m = MagicMock()
+    m.summarize.return_value = SummarizeResult(summary=summary, tags=tags or [])
+    return m
+
+
 class TestFetchAndPublish:
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_publishes_each_fetched_item(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = [_item(1), _item(2)]
-        mock_ulid.return_value = "fake-ulid"
-
-        publisher = MagicMock()
-
-        _fetch_and_publish(publisher)
-
-        assert publisher.publish.call_count == 2
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_event_payload_mirrors_fetched_item(self, mock_ulid, mock_fetch_all):
-        item = FetchedItem(
-            source="aws",
-            source_url="https://example.com/1",
-            title="Title",
-            body="body",
-        )
-        mock_fetch_all.return_value = [item]
+    def test_reserves_before_summarize_and_publish(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1)]
         mock_ulid.return_value = "01ABC"
 
+        dedup = MagicMock()
+        dedup.reserve.return_value = True
+        summarizer = _summarizer()
         publisher = MagicMock()
 
-        _fetch_and_publish(publisher)
+        _fetch_and_publish(dedup, summarizer, publisher)
 
-        event = publisher.publish.call_args[0][0]
-        assert event.article_id == "01ABC"
-        assert event.source == "aws"
-        assert event.source_url == "https://example.com/1"
-        assert event.title == "Title"
-        assert event.body == "body"
+        # 予約 → 要約 → publish の順で呼ばれること
+        dedup.reserve.assert_called_once_with("https://example.com/1")
+        summarizer.summarize.assert_called_once()
+        publisher.publish.assert_called_once()
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_individual_publish_failure_does_not_stop_pipeline(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = [_item(1), _item(2), _item(3)]
-        mock_ulid.return_value = "fake-ulid"
+    def test_skips_when_already_reserved(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1), _item(2)]
+        mock_ulid.return_value = "01ABC"
 
+        dedup = MagicMock()
+        # 1 件目は seen、2 件目は新規
+        dedup.reserve.side_effect = [False, True]
+        summarizer = _summarizer()
         publisher = MagicMock()
-        publisher.publish.side_effect = [Exception("pubsub down"), None, None]
+
+        _fetch_and_publish(dedup, summarizer, publisher)
+
+        # 既に seen の記事は要約/publish に進まない
+        assert summarizer.summarize.call_count == 1
+        assert publisher.publish.call_count == 1
+
+    @patch("newsfeed.runner.fetch_all")
+    @patch("newsfeed.runner.ULID")
+    def test_releases_marker_on_summarize_failure(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1)]
+        mock_ulid.return_value = "01ABC"
+
+        dedup = MagicMock()
+        dedup.reserve.return_value = True
+        summarizer = MagicMock()
+        summarizer.summarize.side_effect = RuntimeError("vertex down")
+        publisher = MagicMock()
 
         with pytest.raises(PublishError):
-            _fetch_and_publish(publisher)
+            _fetch_and_publish(dedup, summarizer, publisher)
 
-        # 失敗後も残り記事の publish 試行が継続する
+        dedup.release.assert_called_once_with("https://example.com/1")
+        publisher.publish.assert_not_called()
+
+    @patch("newsfeed.runner.fetch_all")
+    @patch("newsfeed.runner.ULID")
+    def test_releases_marker_on_publish_failure(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1)]
+        mock_ulid.return_value = "01ABC"
+
+        dedup = MagicMock()
+        dedup.reserve.return_value = True
+        summarizer = _summarizer()
+        publisher = MagicMock()
+        publisher.publish.side_effect = RuntimeError("pubsub down")
+
+        with pytest.raises(PublishError):
+            _fetch_and_publish(dedup, summarizer, publisher)
+
+        dedup.release.assert_called_once_with("https://example.com/1")
+
+    @patch("newsfeed.runner.fetch_all")
+    @patch("newsfeed.runner.ULID")
+    def test_continues_processing_after_individual_failure(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1), _item(2), _item(3)]
+        mock_ulid.return_value = "01ABC"
+
+        dedup = MagicMock()
+        dedup.reserve.return_value = True
+        summarizer = _summarizer()
+        publisher = MagicMock()
+        publisher.publish.side_effect = [RuntimeError("fail"), None, None]
+
+        with pytest.raises(PublishError, match="1 article"):
+            _fetch_and_publish(dedup, summarizer, publisher)
+
+        # 1 件失敗後も残り 2 件の publish が試行される
         assert publisher.publish.call_count == 3
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_raises_publish_error_when_any_article_fails(self, mock_ulid, mock_fetch_all):
+    def test_does_not_raise_when_all_succeed(self, mock_ulid, mock_fetch_all):
         mock_fetch_all.return_value = [_item(1), _item(2)]
-        mock_ulid.return_value = "fake-ulid"
+        mock_ulid.return_value = "01ABC"
 
+        dedup = MagicMock()
+        dedup.reserve.return_value = True
+        summarizer = _summarizer()
         publisher = MagicMock()
-        publisher.publish.side_effect = [None, Exception("pubsub down")]
 
-        with pytest.raises(PublishError, match="1/2"):
-            _fetch_and_publish(publisher)
+        _fetch_and_publish(dedup, summarizer, publisher)  # no raise
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_does_not_raise_when_all_articles_succeed(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = [_item(1), _item(2)]
-        mock_ulid.return_value = "fake-ulid"
+    def test_event_carries_summary_and_tags(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = [_item(1)]
+        mock_ulid.return_value = "01ABC"
 
+        dedup = MagicMock()
+        dedup.reserve.return_value = True
+        summarizer = _summarizer(summary="要約テキスト", tags=["ai", "compute"])
         publisher = MagicMock()
 
-        _fetch_and_publish(publisher)  # no raise
+        _fetch_and_publish(dedup, summarizer, publisher)
 
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_no_items_no_publish_no_error(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = []
-        mock_ulid.return_value = "fake-ulid"
-
-        publisher = MagicMock()
-
-        _fetch_and_publish(publisher)
-
-        assert publisher.publish.call_count == 0
+        event = publisher.publish.call_args[0][0]
+        assert event.article_id == "01ABC"
+        assert event.summary == "要約テキスト"
+        assert event.tags == ["ai", "compute"]
+        assert event.title == "Article 1"
+        assert event.body == "body1"

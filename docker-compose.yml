@@ -1,0 +1,41 @@
+services:
+  # サービス名は env 変数 (UPSTASH_REDIS_URL) との整合のため redis のままにしているが、
+  # 実体は Valkey (BSD-3, Redis 7.2 系フォーク)。RESP/Lua は Redis と 100% 互換。
+  redis:
+    image: valkey/valkey:8-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: >
+      gcloud beta emulators pubsub start
+      --host-port=0.0.0.0:8085
+      --project=${GOOGLE_CLOUD_PROJECT:-local-project}
+    ports:
+      - "8085:8085"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8085 || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  pubsub-init:
+    image: curlimages/curl:8.10.1
+    depends_on:
+      pubsub:
+        condition: service_healthy
+    environment:
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-local-project}
+    command: >
+      sh -c '
+      curl -sf -X PUT
+      "http://pubsub:8085/v1/projects/$${GOOGLE_CLOUD_PROJECT}/topics/news-article-collected"
+      && echo "topic ready: news-article-collected"
+      '
+    restart: "no"

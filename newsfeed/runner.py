@@ -1,56 +1,80 @@
-"""newsfeed パイプラインの実行ロジック。
+"""newsfeed パイプラインの実行ロジック (ADR-020)。
 
-fetch_all の結果を記事単位で news-article-collected へ publish する。
-障害ドメインは記事単位 (1 件の失敗が他記事の処理を止めない) だが、
-1 件でも publish が失敗すればジョブ終了時に PublishError を送出し
-exit 1 として Cloud Run Job 上で失敗を可視化する (ADR-019)。
+各記事につき:
+  1. Redis SETNX で source_url を事前予約 (30 日 TTL)
+  2. 予約成功分のみ Vertex AI 要約 + publish
+  3. Vertex AI / publish が失敗したら DEL でマーカーを解放し次周期に再試行
+
+障害ドメインは記事単位で閉じる (1 件の失敗が他記事を止めない) が、
+失敗が 1 件でもあれば PublishError でジョブを exit 1 として可視化する。
 """
 import logging
 
 from ulid import ULID
 
 from newsfeed.config import Config, load_config
+from newsfeed.dedup import DedupStore, new_client_from_url
 from newsfeed.fetcher import DEFAULT_SOURCES, fetch_all
-from newsfeed.model import ArticleEvent, FetchedItem
+from newsfeed.model import ArticleEvent, FetchedItem, SummarizeResult
 from newsfeed.publisher import ArticlePublisher
+from newsfeed.summarizer import Summarizer
 
 logger = logging.getLogger(__name__)
 
 
 class PublishError(Exception):
-    """1 件以上の記事 publish に失敗した場合に送出されます。"""
+    """1 件以上の記事処理 (要約 or publish) に失敗した場合に送出されます。"""
 
 
-def run(cfg: Config | None = None, publisher: ArticlePublisher | None = None) -> None:
-    """パイプライン全体を実行します。"""
+def run(
+    cfg: Config | None = None,
+    dedup: DedupStore | None = None,
+    summarizer: Summarizer | None = None,
+    publisher: ArticlePublisher | None = None,
+) -> None:
+    """パイプライン全体を実行します。テスト時は各依存を DI できます。"""
     if cfg is None:
         cfg = load_config()
+    if dedup is None:
+        dedup = DedupStore(new_client_from_url(cfg.redis_url))
+    if summarizer is None:
+        summarizer = Summarizer(cfg.google_cloud_project, cfg.vertex_location)
     if publisher is None:
         publisher = ArticlePublisher(cfg.google_cloud_project)
 
-    _fetch_and_publish(publisher)
+    _fetch_and_publish(dedup, summarizer, publisher)
 
 
-def _fetch_and_publish(publisher: ArticlePublisher) -> None:
+def _fetch_and_publish(
+    dedup: DedupStore,
+    summarizer: Summarizer,
+    publisher: ArticlePublisher,
+) -> None:
     logger.info("step 1: fetching RSS feeds")
     items = fetch_all(DEFAULT_SOURCES)
     logger.info("step 1: fetched %d items total", len(items))
 
-    published = 0
-    failed = 0
+    published = duplicates = errors = 0
 
     for item in items:
-        article_id = str(ULID())
-        event = _to_event(article_id, item)
+        if not dedup.reserve(item.source_url):
+            duplicates += 1
+            logger.info("already seen, skipping: source_url=%s", item.source_url)
+            continue
 
+        article_id = str(ULID())
         try:
+            summary = summarizer.summarize(item.title, item.body)
+            event = _to_event(article_id, item, summary)
             publisher.publish(event)
         except Exception as e:
+            # Vertex AI / publish 失敗時は次周期で再試行させるためマーカー解放
+            dedup.release(item.source_url)
+            errors += 1
             logger.error(
-                "publish failed: source=%s article_id=%s source_url=%s error=%s",
+                "processing failed: source=%s article_id=%s source_url=%s error=%s",
                 item.source, article_id, item.source_url, e,
             )
-            failed += 1
             continue
 
         published += 1
@@ -59,18 +83,23 @@ def _fetch_and_publish(publisher: ArticlePublisher) -> None:
             item.source, article_id, item.source_url,
         )
 
-    logger.info("step 2: published=%d failed=%d", published, failed)
+    logger.info(
+        "step 2: published=%d duplicates=%d errors=%d",
+        published, duplicates, errors,
+    )
 
-    if failed > 0:
-        raise PublishError(f"{failed}/{published + failed} article(s) failed to publish")
+    if errors > 0:
+        raise PublishError(f"{errors} article(s) failed to process")
 
 
-def _to_event(article_id: str, item: FetchedItem) -> ArticleEvent:
+def _to_event(article_id: str, item: FetchedItem, summary: SummarizeResult) -> ArticleEvent:
     return ArticleEvent(
         article_id=article_id,
         source=item.source,
         source_url=item.source_url,
+        tags=summary.tags,
         title=item.title,
+        summary=summary.summary,
         body=item.body,
         source_published_at=item.source_published_at,
     )
