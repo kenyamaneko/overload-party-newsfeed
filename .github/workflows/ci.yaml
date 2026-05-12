@@ -36,7 +36,7 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -51,7 +51,7 @@ jobs:
         run: ruff check newsfeed/ tests/
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -72,7 +72,7 @@ jobs:
   build-and-push:
     if: github.ref == 'refs/heads/main'
     needs: [lint, test]
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     timeout-minutes: 30
     steps:
       - name: Checkout
