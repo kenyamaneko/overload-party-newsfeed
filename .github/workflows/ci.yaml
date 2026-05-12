@@ -1,14 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.vscode/**'
-      - '.gitignore'
-      - 'LICENSE'
   pull_request:
     branches: [main]
     paths-ignore:
@@ -24,15 +16,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
-
-env:
-  REGION: asia-northeast1
-  REGISTRY: asia-northeast1-docker.pkg.dev
-  AR_PROJECT: keyandnotes-platform
-  AR_REPOSITORY: overload-party
-  IMAGE_NAME: newsfeed
-  DEPLOY_PROJECT: overload-party-dev
 
 jobs:
   lint:
@@ -68,46 +51,3 @@ jobs:
         run: docker compose up -d --wait redis
       - name: Run tests
         run: pytest tests/ -v
-
-  build-and-push:
-    if: github.ref == 'refs/heads/main'
-    needs: [lint, test]
-    runs-on: ubicloud-standard-2
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
-          token_format: access_token
-
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Configure docker auth
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.access_token }}
-
-      - name: Build and push
-        run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}
-          docker build -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest .
-          docker push ${IMAGE}:${{ github.sha }}
-          docker push ${IMAGE}:latest
-
-      - name: Update Cloud Run Job
-        run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          gcloud run jobs update newsfeed-job \
-            --region ${{ env.REGION }} \
-            --project ${{ env.DEPLOY_PROJECT }} \
-            --image "${IMAGE}" \
-            --quiet
