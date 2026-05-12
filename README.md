@@ -54,9 +54,3 @@ make down       # 停止と volume 削除
 ```
 
 `.env.local` は `.env.local.example` をコピーして作る。ローカルでは Secret Manager を経由しないため env 直読み。
-
-## 公開パッケージ
-
-[packages/newsfeed-constants-npm/](packages/newsfeed-constants-npm/) に `CloudNewsSource` の TypeScript 型を npm パッケージとして公開している。Gateway の TS 型定義経由で client が cloud news source 値を型付けするために使う。
-
-SSoT: `data/newsfeed_constants.yaml` → `python3 scripts/generate_types.py` で再生成。
