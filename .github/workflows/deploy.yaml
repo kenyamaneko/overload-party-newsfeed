@@ -1,0 +1,99 @@
+# 手動 dispatch で newsfeed イメージを build & push し、Cloud Run Job を更新する。
+# lint と test が通過してから deploy する。
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: asia-northeast1
+  REGISTRY: asia-northeast1-docker.pkg.dev
+  AR_PROJECT: keyandnotes-platform
+  AR_REPOSITORY: overload-party
+  IMAGE_NAME: newsfeed
+  DEPLOY_PROJECT: overload-party-dev
+
+jobs:
+  lint:
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run ruff check
+        run: ruff check newsfeed/ tests/
+
+  test:
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      # test_dedup.py は実 Valkey に接続するので docker compose で起動する
+      # (matchmaking の redis_queue_test.go と同方針)
+      - name: Start Valkey
+        run: docker compose up -d --wait redis
+      - name: Run tests
+        run: pytest tests/ -v
+
+  deploy:
+    needs: [lint, test]
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker auth
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}
+          docker build -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest .
+          docker push ${IMAGE}:${{ github.sha }}
+          docker push ${IMAGE}:latest
+
+      - name: Update Cloud Run Job
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          gcloud run jobs update newsfeed-job \
+            --region ${{ env.REGION }} \
+            --project ${{ env.DEPLOY_PROJECT }} \
+            --image "${IMAGE}" \
+            --quiet
