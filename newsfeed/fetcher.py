@@ -54,7 +54,7 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
                     source=src.name,
                     source_url=source_url,
                     title=title,
-                    body=_entry_body(entry, title),
+                    body=extract_entry_body(entry, title),
                     source_published_at=_parse_date(entry),
                 ))
                 count += 1
@@ -72,7 +72,7 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
     return items
 
 
-def _entry_body(entry, title: str) -> str:
+def extract_entry_body(entry, title: str) -> str:
     """RSS エントリから本文をプレーンテキストで取得する。
 
     content:encoded を優先、無ければ description (summary) を使う。
@@ -120,7 +120,7 @@ class _PlainTextExtractor(HTMLParser):
     def handle_data(self, data) -> None:
         self._parts.append(data)
 
-    def text(self) -> str:
+    def build_text(self) -> str:
         return "".join(self._parts)
 
 
@@ -128,6 +128,6 @@ def _html_to_plain_text(html: str) -> str:
     """HTML タグを除去し段落区切りを保ったプレーンテキストを返す。"""
     extractor = _PlainTextExtractor()
     extractor.feed(html)
-    lines = [line.strip() for line in extractor.text().splitlines()]
+    lines = [line.strip() for line in extractor.build_text().splitlines()]
     non_empty = [line for line in lines if line]
     return "\n".join(non_empty)
