@@ -93,6 +93,16 @@ def _fetch_and_publish(
 
 
 def convert_to_event(article_id: str, item: FetchedItem, summary: SummarizeResult) -> ArticleEvent:
+    """取得記事と要約結果を publish 用の ArticleEvent に変換する。
+
+    Args:
+        article_id: 採番済みの記事 ID。
+        item: フィードから取得した記事。
+        summary: Vertex AI による要約・タグ付け結果。
+
+    Returns:
+        publish 用に組み立てた ArticleEvent。
+    """
     return ArticleEvent(
         article_id=article_id,
         source=item.source,

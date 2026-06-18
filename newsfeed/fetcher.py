@@ -121,6 +121,11 @@ class _PlainTextExtractor(HTMLParser):
         self._parts.append(data)
 
     def build_text(self) -> str:
+        """パース中に収集したテキスト断片を連結して返す。
+
+        Returns:
+            ブロック要素を改行で区切ったプレーンテキスト。
+        """
         return "".join(self._parts)
 
 
