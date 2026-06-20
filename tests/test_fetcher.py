@@ -7,9 +7,9 @@ import pytest
 from newsfeed.fetcher import (
     FeedSource,
     FetchError,
-    _entry_body,
     _html_to_plain_text,
     _parse_date,
+    extract_entry_body,
     fetch_all,
 )
 
@@ -20,19 +20,19 @@ class TestEntryBody:
             "content": [{"value": "<p>full body</p>"}],
             "summary": "short summary",
         }
-        assert _entry_body(entry, "Title") == "full body"
+        assert extract_entry_body(entry, "Title") == "full body"
 
     def test_falls_back_to_summary(self):
         entry = {"summary": "<p>short summary</p>"}
-        assert _entry_body(entry, "Title") == "short summary"
+        assert extract_entry_body(entry, "Title") == "short summary"
 
     def test_falls_back_to_title_when_body_empty(self):
         entry = {}
-        assert _entry_body(entry, "My Title") == "My Title"
+        assert extract_entry_body(entry, "My Title") == "My Title"
 
     def test_html_is_stripped_to_plain_text(self):
         entry = {"content": [{"value": "<p>Hello</p><p>World</p>"}]}
-        assert _entry_body(entry, "t") == "Hello\nWorld"
+        assert extract_entry_body(entry, "t") == "Hello\nWorld"
 
 
 class TestHtmlToPlainText:

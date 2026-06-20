@@ -13,7 +13,7 @@ import logging
 from ulid import ULID
 
 from newsfeed.config import Config, load_config
-from newsfeed.dedup import DedupStore, new_client_from_url
+from newsfeed.dedup import DedupStore, create_client_from_url
 from newsfeed.fetcher import DEFAULT_SOURCES, fetch_all
 from newsfeed.model import ArticleEvent, FetchedItem, SummarizeResult
 from newsfeed.publisher import ArticlePublisher
@@ -36,7 +36,7 @@ def run(
     if cfg is None:
         cfg = load_config()
     if dedup is None:
-        dedup = DedupStore(new_client_from_url(cfg.redis_url))
+        dedup = DedupStore(create_client_from_url(cfg.redis_url))
     if summarizer is None:
         summarizer = Summarizer(cfg.google_cloud_project, cfg.vertex_location)
     if publisher is None:
@@ -65,7 +65,7 @@ def _fetch_and_publish(
         article_id = str(ULID())
         try:
             summary = summarizer.summarize(item.title, item.body)
-            event = _to_event(article_id, item, summary)
+            event = convert_to_event(article_id, item, summary)
             publisher.publish(event)
         except Exception as e:
             # Vertex AI / publish 失敗時は次周期で再試行させるためマーカー解放
@@ -92,7 +92,17 @@ def _fetch_and_publish(
         raise PublishError(f"{errors} article(s) failed to process")
 
 
-def _to_event(article_id: str, item: FetchedItem, summary: SummarizeResult) -> ArticleEvent:
+def convert_to_event(article_id: str, item: FetchedItem, summary: SummarizeResult) -> ArticleEvent:
+    """取得記事と要約結果を publish 用の ArticleEvent に変換する。
+
+    Args:
+        article_id: 採番済みの記事 ID。
+        item: フィードから取得した記事。
+        summary: Vertex AI による要約・タグ付け結果。
+
+    Returns:
+        publish 用に組み立てた ArticleEvent。
+    """
     return ArticleEvent(
         article_id=article_id,
         source=item.source,

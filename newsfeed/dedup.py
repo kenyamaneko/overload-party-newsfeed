@@ -29,7 +29,7 @@ class DedupStore:
         self._client.delete(key)
 
 
-def new_client_from_url(url: str) -> redis.Redis:
+def create_client_from_url(url: str) -> redis.Redis:
     """接続 URL から redis.Redis クライアントを作成する。
 
     decode_responses=True により全レスポンスが str で返る (bytes/str 分岐の排除)。
