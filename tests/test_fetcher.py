@@ -34,6 +34,18 @@ class TestEntryBody:
         entry = {"content": [{"value": "<p>Hello</p><p>World</p>"}]}
         assert extract_entry_body(entry, "t") == "Hello\nWorld"
 
+    @pytest.mark.parametrize("entry", [
+        {"content": [{"value": ""}], "summary": "ignored summary"},
+        {"content": [{}], "summary": "ignored summary"},
+    ], ids=["empty-content-value", "missing-content-value-key"])
+    def test_present_but_empty_content_falls_back_to_title(self, entry):
+        """content キーが在れば値が空/欠落でも summary を使わず title で本文を埋めることを検証する。
+
+        Args:
+            entry: content キーは在るが本文値が空または欠落した feedparser エントリ。
+        """
+        assert extract_entry_body(entry, "Fallback Title") == "Fallback Title"
+
 
 class TestHtmlToPlainText:
     def test_strips_inline_tags(self):
@@ -116,3 +128,57 @@ class TestFetchAll:
         assert result[0].source == "good"
         assert result[0].title == "Good Article"
         assert result[0].body == "body"
+
+    @pytest.mark.parametrize("entry, expected_urls", [
+        ({"link": "http://example.com/link", "title": "T"},
+         ["http://example.com/link"]),
+        ({"id": "urn:uuid:abc", "title": "T"},
+         ["urn:uuid:abc"]),
+        ({"link": "http://example.com/link", "id": "urn:uuid:abc", "title": "T"},
+         ["http://example.com/link"]),
+        ({"title": "T"},
+         []),
+    ], ids=["link-only", "id-only", "link-and-id-prefers-link", "neither-skipped"])
+    def test_source_url_resolves_link_then_id_then_skips(self, entry, expected_urls):
+        """source_url は link→id の順に解決し、両者欠落の entry は item 化しないことを検証する。
+
+        Args:
+            entry: feedparser エントリを模した辞書。
+            expected_urls: 生成される FetchedItem の source_url 列 (除外時は空リスト)。
+        """
+        with patch("newsfeed.fetcher.feedparser.parse") as mock_parse:
+            mock_parse.return_value = self._make_feed([entry])
+            result = fetch_all([FeedSource("src1", "http://example.com/feed")])
+        assert [item.source_url for item in result] == expected_urls
+
+    def test_empty_source_list_returns_empty_without_error(self):
+        """ソース 0 件では全面失敗と区別され、FetchError を送出せず空リストを返すことを検証する。"""
+        assert fetch_all([]) == []
+
+    def test_empty_feed_returns_empty_without_error(self):
+        """取得は成功するが entries 0 件のフィードは全面失敗と区別され、空リストを返すことを検証する。"""
+        with patch("newsfeed.fetcher.feedparser.parse") as mock_parse:
+            mock_parse.return_value = self._make_feed([])
+            result = fetch_all([FeedSource("src1", "http://example.com/feed")])
+        assert result == []
+
+    def test_returns_all_valid_entries_from_single_source(self):
+        """単一ソースに含まれる複数の有効 entry が全て FetchedItem 化されることを検証する。"""
+        entries = [
+            {"link": "http://example.com/0", "title": "Article 0"},
+            {"link": "http://example.com/1", "title": "Article 1"},
+            {"link": "http://example.com/2", "title": "Article 2"},
+        ]
+        with patch("newsfeed.fetcher.feedparser.parse") as mock_parse:
+            mock_parse.return_value = self._make_feed(entries)
+            result = fetch_all([FeedSource("src1", "http://example.com/feed")])
+        assert [item.source_url for item in result] == [
+            "http://example.com/0",
+            "http://example.com/1",
+            "http://example.com/2",
+        ]
+        assert [item.title for item in result] == [
+            "Article 0",
+            "Article 1",
+            "Article 2",
+        ]
