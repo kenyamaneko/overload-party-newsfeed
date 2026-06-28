@@ -20,6 +20,14 @@ class FetchError(Exception):
     """
 
 
+class MalformedEntryError(Exception):
+    """content タグが在るのに本文が空のエントリを検出した場合に送出されます。
+
+    title への黙フォールバックで本文を捏造せず、当該ソースの取得失敗として
+    表面化させます。
+    """
+
+
 @dataclass(frozen=True)
 class FeedSource:
     """RSS フィードソースの名前と URL を保持します。"""
@@ -75,16 +83,31 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
 def extract_entry_body(entry, title: str) -> str:
     """RSS エントリから本文をプレーンテキストで取得する。
 
-    content:encoded を優先、無ければ description (summary) を使う。
-    body が空になる場合のみ title で埋める (news 側は body が空文字列のイベントを
-    不正として扱うため)。
+    content:encoded が在ればそれを本文とする。content タグが無いときに限り
+    description (summary) を本文とし、summary も空なら title で埋める
+    (news 側は body が空文字列のイベントを不正として扱うため)。
+
+    Args:
+        entry: feedparser が解釈した RSS/Atom エントリ。
+        title: content タグが無く summary も空のときに本文とするタイトル。
+
+    Returns:
+        HTML を除去したプレーンテキストの本文。
+
+    Raises:
+        MalformedEntryError: content タグが在るのに本文が空のとき。
     """
     content_list = entry.get("content")
     if content_list:
         html = content_list[0].get("value", "")
-    else:
-        html = entry.get("summary", "")
-    body = _html_to_plain_text(html) if html else ""
+        body = _html_to_plain_text(html) if html else ""
+        if not body:
+            raise MalformedEntryError(
+                f"content tag present but body is empty: title={title!r}"
+            )
+        return body
+    summary = entry.get("summary", "")
+    body = _html_to_plain_text(summary) if summary else ""
     return body if body else title
 
 

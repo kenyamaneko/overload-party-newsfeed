@@ -2,11 +2,13 @@ import time
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import feedparser
 import pytest
 
 from newsfeed.fetcher import (
     FeedSource,
     FetchError,
+    MalformedEntryError,
     _html_to_plain_text,
     _parse_date,
     extract_entry_body,
@@ -14,37 +16,114 @@ from newsfeed.fetcher import (
 )
 
 
+def _first_entry(xml: str):
+    """RSS/Atom XML を feedparser で解釈し最初のエントリを返す。
+
+    Args:
+        xml: RSS または Atom フィードの XML 文字列。
+
+    Returns:
+        feedparser が解釈した最初のエントリ。
+    """
+    return feedparser.parse(xml).entries[0]
+
+
+_ATOM_CONTENT_AND_SUMMARY = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Article</title>
+    <link href="http://example.com/a"/>
+    <summary>short summary</summary>
+    <content type="html">&lt;p&gt;full body&lt;/p&gt;</content>
+  </entry>
+</feed>"""
+
+_RSS_SUMMARY_ONLY = """<?xml version="1.0"?>
+<rss version="2.0">
+<channel><title>T</title>
+<item>
+  <title>Article</title>
+  <link>http://example.com/r</link>
+  <description>&lt;p&gt;short summary&lt;/p&gt;</description>
+</item>
+</channel></rss>"""
+
+_RSS_NO_CONTENT_NO_SUMMARY = """<?xml version="1.0"?>
+<rss version="2.0">
+<channel><title>T</title>
+<item>
+  <title>Bare Article</title>
+  <link>http://example.com/r2</link>
+</item>
+</channel></rss>"""
+
+_ATOM_EMPTY_CONTENT = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Empty Content Article</title>
+    <link href="http://example.com/empty"/>
+    <summary>summary that must not become the body</summary>
+    <content type="html"></content>
+  </entry>
+</feed>"""
+
+_ATOM_SELF_CLOSING_CONTENT = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Self Closing Content Article</title>
+    <link href="http://example.com/sc"/>
+    <summary>summary that must not become the body</summary>
+    <content type="html"/>
+  </entry>
+</feed>"""
+
+_RSS_EMPTY_CONTENT_ENCODED = """<?xml version="1.0"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<channel><title>T</title>
+<item>
+  <title>Empty content:encoded Article</title>
+  <link>http://example.com/rss-empty</link>
+  <description>description that must not become the body</description>
+  <content:encoded></content:encoded>
+</item>
+</channel></rss>"""
+
+
 class TestEntryBody:
-    def test_prefers_content_over_summary(self):
-        entry = {
-            "content": [{"value": "<p>full body</p>"}],
-            "summary": "short summary",
-        }
+    """extract_entry_body の本文解決仕様を実フィード解釈 (feedparser) で検証する。"""
+
+    def test_content_is_used_over_summary(self):
+        """content タグが在る記事は content を本文とし summary を使わないことを検証する。"""
+        entry = _first_entry(_ATOM_CONTENT_AND_SUMMARY)
         assert extract_entry_body(entry, "Title") == "full body"
 
-    def test_falls_back_to_summary(self):
-        entry = {"summary": "<p>short summary</p>"}
+    def test_summary_is_used_when_content_tag_absent(self):
+        """content タグが無い記事は description (summary) を本文とすることを検証する。"""
+        entry = _first_entry(_RSS_SUMMARY_ONLY)
         assert extract_entry_body(entry, "Title") == "short summary"
 
-    def test_falls_back_to_title_when_body_empty(self):
-        entry = {}
+    def test_title_is_used_when_content_tag_absent_and_summary_empty(self):
+        """content タグが無く summary も空の記事のみ title を本文とする正当なフォールバックを検証する。"""
+        entry = _first_entry(_RSS_NO_CONTENT_NO_SUMMARY)
         assert extract_entry_body(entry, "My Title") == "My Title"
 
-    def test_html_is_stripped_to_plain_text(self):
-        entry = {"content": [{"value": "<p>Hello</p><p>World</p>"}]}
-        assert extract_entry_body(entry, "t") == "Hello\nWorld"
+    @pytest.mark.parametrize("xml", [
+        _ATOM_EMPTY_CONTENT,
+        _ATOM_SELF_CLOSING_CONTENT,
+        _RSS_EMPTY_CONTENT_ENCODED,
+    ], ids=["atom-empty-content", "atom-self-closing-content", "rss-empty-content-encoded"])
+    def test_empty_content_tag_raises_malformed_entry_error(self, xml):
+        """content タグが在るのに本文が空の記事は不正として MalformedEntryError を送出することを検証する。
 
-    @pytest.mark.parametrize("entry", [
-        {"content": [{"value": ""}], "summary": "ignored summary"},
-        {"content": [{}], "summary": "ignored summary"},
-    ], ids=["empty-content-value", "missing-content-value-key"])
-    def test_present_but_empty_content_falls_back_to_title(self, entry):
-        """content キーが在れば値が空/欠落でも summary を使わず title で本文を埋めることを検証する。
+        title への黙フォールバックを廃止し、summary が在っても本文に流用せず
+        取得失敗として表面化させる仕様。
 
         Args:
-            entry: content キーは在るが本文値が空または欠落した feedparser エントリ。
+            xml: content タグが在るが本文値が空の実 RSS/Atom フィード XML。
         """
-        assert extract_entry_body(entry, "Fallback Title") == "Fallback Title"
+        entry = _first_entry(xml)
+        with pytest.raises(MalformedEntryError):
+            extract_entry_body(entry, "Fallback Title")
 
 
 class TestHtmlToPlainText:
@@ -182,3 +261,24 @@ class TestFetchAll:
             "Article 1",
             "Article 2",
         ]
+
+    def test_source_with_malformed_entry_escalates_to_fetch_error_when_sole_source(self):
+        """不正エントリ (content 在り・本文空) を含むソースは取得失敗として扱われ、
+        単独ソースなら全面失敗として FetchError に昇格することを検証する。
+        """
+        feed = feedparser.parse(_ATOM_EMPTY_CONTENT)
+        with patch("newsfeed.fetcher.feedparser.parse", return_value=feed):
+            with pytest.raises(FetchError):
+                fetch_all([FeedSource("only", "http://example.com/feed")])
+
+    def test_malformed_entry_in_one_source_does_not_fail_other_sources(self):
+        """1 ソースの不正エントリは他ソースの取得を妨げず、部分取得として継続することを検証する。"""
+        bad_feed = feedparser.parse(_ATOM_EMPTY_CONTENT)
+        good_feed = feedparser.parse(_ATOM_CONTENT_AND_SUMMARY)
+        with patch("newsfeed.fetcher.feedparser.parse", side_effect=[bad_feed, good_feed]):
+            result = fetch_all([
+                FeedSource("bad", "http://bad.example.com/feed"),
+                FeedSource("good", "http://good.example.com/feed"),
+            ])
+        assert [item.source for item in result] == ["good"]
+        assert [item.body for item in result] == ["full body"]
