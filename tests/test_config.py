@@ -36,12 +36,19 @@ class TestLoadConfigRequired:
 
 class TestAppEnvValidation:
     def test_accepts_local(self):
+        """APP_ENV=local は受理され、env var の Redis URL をそのまま採用することを検証する。"""
         env = _base_env(APP_ENV="local", UPSTASH_REDIS_URL="redis://localhost:6379/0")
         with patch.dict(os.environ, env, clear=True):
-            load_config()  # no raise
+            cfg = load_config()
+        assert cfg.redis_url == "redis://localhost:6379/0"
 
     @patch("newsfeed.config.SecretAccessor")
     def test_accepts_production(self, accessor_cls):
+        """APP_ENV=production は受理され、Secret Manager 経由の TLS URL を採用することを検証する。
+
+        Args:
+            accessor_cls: SecretAccessor を差し替える patch モック。
+        """
         accessor = MagicMock()
         accessor.access.side_effect = lambda sid: {
             "newsfeed-upstash-redis-endpoint": "upstash.example.com:6379",
@@ -51,16 +58,20 @@ class TestAppEnvValidation:
 
         env = _base_env(APP_ENV="production")
         with patch.dict(os.environ, env, clear=True):
-            load_config()  # no raise
+            cfg = load_config()
+        assert cfg.redis_url.startswith("rediss://")
 
-    def test_rejects_intermediate_values_like_dev_or_prod(self):
-        """APP_ENV は local / production の 2 値のみ。dev / stg / prod は弾く
-        (環境差分は GOOGLE_CLOUD_PROJECT で吸収する運用)。"""
-        for invalid in ("dev", "stg", "prod", "staging", "test", ""):
-            env = _base_env(APP_ENV=invalid)
-            with patch.dict(os.environ, env, clear=True):
-                with pytest.raises(ValueError, match="APP_ENV"):
-                    load_config()
+    @pytest.mark.parametrize("invalid", ["dev", "stg", "prod", "staging", "test", ""])
+    def test_rejects_value_outside_local_and_production(self, invalid):
+        """local / production 以外の APP_ENV 値は ValueError で弾くことを検証する。
+
+        Args:
+            invalid: local / production のいずれにも該当しない APP_ENV 値。
+        """
+        env = _base_env(APP_ENV=invalid)
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ValueError, match="APP_ENV"):
+                load_config()
 
 
 class TestLoadConfigLocalMode:

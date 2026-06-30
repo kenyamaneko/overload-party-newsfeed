@@ -113,7 +113,13 @@ class TestFetchAndPublish:
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_does_not_raise_when_all_succeed(self, mock_ulid, mock_fetch_all):
+    def test_publishes_each_item_and_releases_none_when_all_succeed(self, mock_ulid, mock_fetch_all):
+        """全件成功時は各記事を publish し、マーカー解放を行わないことを検証する。
+
+        Args:
+            mock_ulid: ULID を差し替える patch モック。
+            mock_fetch_all: fetch_all を差し替える patch モック。
+        """
         mock_fetch_all.return_value = [_item(1), _item(2)]
         mock_ulid.return_value = "01ABC"
 
@@ -122,7 +128,10 @@ class TestFetchAndPublish:
         summarizer = _summarizer()
         publisher = MagicMock()
 
-        _fetch_and_publish(dedup, summarizer, publisher)  # no raise
+        _fetch_and_publish(dedup, summarizer, publisher)
+
+        assert publisher.publish.call_count == 2
+        dedup.release.assert_not_called()
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
