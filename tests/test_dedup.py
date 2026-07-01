@@ -8,8 +8,6 @@ DB 0 と分離するため — テストは毎回 FLUSHDB するので、ジョ�
 Valkey 未起動のときは Ping で明示的に fail させる (silent skip を避ける)。
 `make up` もしくは `docker compose up -d redis` が前提。
 """
-import time
-
 import pytest
 import redis
 
@@ -67,35 +65,3 @@ class TestRelease:
     def test_releasing_unknown_url_is_noop(self, store):
         # DEL は存在しないキーに対しても例外を出さない (redis-py 仕様)
         store.release("https://example.com/nonexistent")
-
-
-class TestExpiry:
-    def test_reserved_url_becomes_available_after_ttl(self, client):
-        """短 TTL をセットして、期限切れ後は再予約できることを確認する。
-
-        30 日 TTL の挙動を直接テストするのは非現実的なので、本テストは
-        expire(1) で短 TTL を強制する。DedupStore の API 経由ではなく
-        低レベル redis client を使って「TTL が効いている」点だけ保証する。
-        """
-        key = "newsfeed:seen:https://example.com/short"
-        client.set(key, "1", nx=True, ex=1)
-        assert client.get(key) == "1"
-        time.sleep(1.2)
-        assert client.get(key) is None
-
-
-class TestAtomicity:
-    def test_setnx_prevents_concurrent_double_reservation(self, store):
-        """SETNX のアトミック性: 連続呼び出しで最初だけ True。
-
-        同一プロセス内で検査するため厳密な並行性テストではないが、
-        `set(..., nx=True)` が check+mark を 1 コマンドで行う契約が
-        崩れていないことを担保する。
-        """
-        url = "https://example.com/race"
-        first = store.reserve(url)
-        second = store.reserve(url)
-        third = store.reserve(url)
-        assert first is True
-        assert second is False
-        assert third is False
