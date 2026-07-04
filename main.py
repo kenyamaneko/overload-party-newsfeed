@@ -1,16 +1,14 @@
 import logging
+import os
 import sys
 
+from newsfeed.logging_config import configure_logging
 from newsfeed.runner import run
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
 
 
 def main() -> None:
     """newsfeed パイプラインのエントリポイントです。"""
+    configure_logging(os.environ["APP_ENV"])
     try:
         run()
     except Exception as e:
