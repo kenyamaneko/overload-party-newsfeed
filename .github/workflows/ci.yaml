@@ -45,9 +45,6 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
-      # test_dedup.py は実 Valkey に接続するので docker compose で起動する
-      # (matchmaking の redis_queue_test.go と同方針)
-      - name: Start Valkey
-        run: docker compose up -d --wait redis
+      # test_dedup.py は Testcontainers が Valkey を起動する (runner の Docker を使用)
       - name: Run tests
         run: pytest tests/ -v

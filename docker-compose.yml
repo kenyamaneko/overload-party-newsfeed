@@ -1,41 +1,60 @@
+# newsfeed のローカル開発スタック。構成と使い方は README「ローカル開発」を参照。
+name: overload-party-newsfeed
+
 services:
   # サービス名は env 変数 (UPSTASH_REDIS_URL) との整合のため redis のままにしているが、
   # 実体は Valkey (BSD-3, Redis 7.2 系フォーク)。RESP/Lua は Redis と 100% 互換。
   redis:
     image: valkey/valkey:8-alpine
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 2s
       timeout: 2s
       retries: 10
 
-  pubsub:
+  pubsub-emulator:
     image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
     command: >
       gcloud beta emulators pubsub start
+      --project=overload-party-local
       --host-port=0.0.0.0:8085
-      --project=${GOOGLE_CLOUD_PROJECT:-local-project}
-    ports:
-      - "8085:8085"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8085 || exit 1"]
-      interval: 2s
-      timeout: 2s
-      retries: 10
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8085 || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
+  # newsfeed は news-article-collected topic へ publish する。publish 先が無いと送信が失敗するため起動前に用意する。
   pubsub-init:
-    image: curlimages/curl:8.10.1
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
     depends_on:
-      pubsub:
+      pubsub-emulator:
         condition: service_healthy
     environment:
-      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-local-project}
-    command: >
-      sh -c '
-      curl -sf -X PUT
-      "http://pubsub:8085/v1/projects/$${GOOGLE_CLOUD_PROJECT}/topics/news-article-collected"
-      && echo "topic ready: news-article-collected"
-      '
+      PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
+      PUBSUB_PROJECT_ID: overload-party-local
+      # topic 名の SSoT はアプリ側 (newsfeed/publisher.py の TOPIC_NAME)。合わせて設定する。
+      NEWS_ARTICLE_COLLECTED_TOPIC: news-article-collected
+    volumes:
+      - ./docker/pubsub/init-topics.sh:/init-topics.sh:ro
+    entrypoint: ["/bin/bash", "/init-topics.sh"]
+    restart: "no"
+
+  # Cloud Run Job 相当のバッチ。fetch→dedup→summarize→publish を 1 周して終了する。
+  newsfeed:
+    build: .
+    depends_on:
+      redis:
+        condition: service_healthy
+      pubsub-init:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: local
+      GOOGLE_CLOUD_PROJECT: overload-party-local
+      VERTEX_LOCATION: us-central1
+      UPSTASH_REDIS_URL: redis://redis:6379/0
+      PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
+    volumes:
+      - ./main.py:/app/main.py:ro
+      - ./newsfeed:/app/newsfeed:ro
     restart: "no"

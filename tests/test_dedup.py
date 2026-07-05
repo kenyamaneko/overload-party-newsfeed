@@ -1,31 +1,40 @@
 """DedupStore の結合テスト。
 
-docker-compose の Valkey 相手に実挙動を検証する (matchmaking の
-redis_queue_test.go と同じ方針)。DB 1 を使うのは run-local (.env.local) の
-DB 0 と分離するため — テストは毎回 FLUSHDB するので、ジョブのマーカーと
-同居させない。
-
-Valkey 未起動のときは Ping で明示的に fail させる (silent skip を避ける)。
-`make up` もしくは `docker compose up -d redis` が前提。
+Valkey を testcontainers で起動して実挙動を検証する (matchmaking の
+redis_queue_test.go と同じ方針)。各テストは client fixture の FLUSHDB で分離するため、
+container は session に 1 つで足りる。
 """
 import pytest
 import redis
+from testcontainers.redis import RedisContainer
 
 from newsfeed.dedup import DedupStore
 
-_TEST_REDIS_URL = "redis://localhost:6379/1"
+
+@pytest.fixture(scope="session")
+def start_valkey_container():
+    """session 全体で共有する Valkey container を起動する。
+
+    Yields:
+        str: 起動した container への redis:// 接続 URL。
+    """
+    with RedisContainer("valkey/valkey:8-alpine") as valkey:
+        host = valkey.get_container_host_ip()
+        port = valkey.get_exposed_port(valkey.port)
+        yield f"redis://{host}:{port}"
 
 
 @pytest.fixture
-def client():
-    c = redis.from_url(_TEST_REDIS_URL, decode_responses=True)
-    try:
-        c.ping()
-    except redis.ConnectionError as e:
-        pytest.fail(
-            f"Redis not reachable at {_TEST_REDIS_URL}: {e}. "
-            "Run `make up` or `docker compose up -d redis` first."
-        )
+def client(start_valkey_container):
+    """テストごとに FLUSHDB 済みの Valkey クライアントを用意する。
+
+    Args:
+        start_valkey_container: session fixture が起動した Valkey container の接続 URL。
+
+    Yields:
+        redis.Redis: FLUSHDB 済みのクライアント。テスト終了時に close する。
+    """
+    c = redis.from_url(start_valkey_container, decode_responses=True)
     c.flushdb()
     yield c
     c.close()
