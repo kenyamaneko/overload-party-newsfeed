@@ -1,21 +1,16 @@
-.PHONY: up down test lint run-local help
+.PHONY: run down test lint help
 
-up: ## Start local Valkey + Pub/Sub emulator
-	# pubsub-init は one-shot (exit 0) なので --wait の対象にせず別ステップで走らせる
-	docker compose up -d --wait redis pubsub
-	docker compose up pubsub-init
+run: ## Run the job + infra in compose (batch: fetch→dedup→summarize→publish を 1 周)
+	docker compose up --build
 
-down: ## Stop local deps and wipe state
+down: ## Stop the local stack and remove volumes
 	docker compose down -v
 
-test: up ## Run pytest against local Valkey + Pub/Sub emulator
+test: ## Run pytest (Testcontainers starts Valkey; requires Docker)
 	pytest tests/ -v
 
 lint: ## Run ruff
 	ruff check newsfeed/ tests/
-
-run-local: up ## Run Cloud Run Job locally against local deps
-	set -a && . ./.env.local && set +a && python main.py
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \

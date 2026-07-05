@@ -46,11 +46,21 @@ Upstash DB 名は環境ごとに別インスタンス: `overload-party-{dev,stg,
 
 ## ローカル開発
 
+`make run` はジョブ本体とインフラ (Valkey / Pub/Sub emulator) を compose 内で起動する。
+インフラはホストへ publish せず内部ネットワークのサービス名 DNS で参照するため、他リポの
+ローカルスタックやホスト上の他アプリとポートが衝突しない。newsfeed は API ポートを持たない
+バッチのため、ホストへ publish するポートは無い。
+
 ```bash
-make up         # Valkey + Pub/Sub emulator を起動
-make test       # pytest 実行
-make run-local  # .env.local を読み込んでジョブを実行
-make down       # 停止と volume 削除
+make run   # ジョブ + インフラを compose で起動 (バッチを 1 周して終了)
+make down  # 停止して volume を削除
+make test  # pytest 実行 (Testcontainers が Valkey を起動; Docker 必須)
+make lint  # ruff
 ```
 
-`.env.local` は `.env.local.example` をコピーして作る。ローカルでは Secret Manager を経由しないため env 直読み。
+ソース (`main.py` / `newsfeed/`) は bind-mount しているため、編集して再度 `make run` すれば
+イメージを作り直さずに反映される (依存を変えたときだけ `--build` が再ビルドする)。
+ローカルでは Secret Manager を経由せず compose の env を直読みする。
+
+要約 (Vertex AI) にはエミュレータが無く実 API を呼ぶため、ジョブを最後まで完走させるには
+Google Cloud の認証情報が必要になる。認証なしでは要約ステップで失敗して終了する。
