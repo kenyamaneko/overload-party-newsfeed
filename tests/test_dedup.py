@@ -45,32 +45,32 @@ def store(client):
     return DedupStore(client)
 
 
-class TestReserve:
-    def test_new_url_returns_true(self, store):
+class TestURLの予約:
+    def test_新規URLはTrueを返す(self, store):
         assert store.reserve("https://example.com/a") is True
 
-    def test_same_url_returns_false_on_second_call(self, store):
+    def test_同じURLの2回目はFalseを返す(self, store):
         assert store.reserve("https://example.com/a") is True
         assert store.reserve("https://example.com/a") is False
 
-    def test_different_urls_are_independent(self, store):
+    def test_異なるURLはそれぞれ独立して予約できる(self, store):
         assert store.reserve("https://example.com/a") is True
         assert store.reserve("https://example.com/b") is True
 
-    def test_sets_30_day_ttl(self, client, store):
+    def test_予約キーに30日以内のTTLを設定する(self, client, store):
         store.reserve("https://example.com/a")
         ttl = client.ttl("newsfeed:seen:https://example.com/a")
         # TTL は設定済み (> 0) かつ上限 30 日 (2592000 秒) 以下
         assert 0 < ttl <= 30 * 24 * 60 * 60
 
 
-class TestRelease:
-    def test_releasing_allows_re_reserve(self, store):
+class TestURLの解放:
+    def test_解放後は再予約できる(self, store):
         store.reserve("https://example.com/a")
         store.release("https://example.com/a")
         # 解放後は再予約できる (Vertex AI / publish 失敗時の再試行パス)
         assert store.reserve("https://example.com/a") is True
 
-    def test_releasing_unknown_url_is_noop(self, store):
+    def test_存在しないURLの解放は何もしない(self, store):
         # DEL は存在しないキーに対しても例外を出さない (redis-py 仕様)
         store.release("https://example.com/nonexistent")

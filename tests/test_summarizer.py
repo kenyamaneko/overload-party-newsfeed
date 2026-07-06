@@ -15,10 +15,10 @@ def _mock_model(response_text: str) -> MagicMock:
     return model
 
 
-class TestSummarize:
+class Test記事の要約:
     @patch("newsfeed.summarizer.vertexai.init")
     @patch("newsfeed.summarizer.GenerativeModel")
-    def test_returns_summary_and_valid_tags(self, model_cls, init):
+    def test_要約と正当なタグを返す(self, model_cls, init):
         model_cls.return_value = _mock_model(
             json.dumps({"summary": "要約", "tags": ["ai", "compute"]}),
         )
@@ -29,7 +29,7 @@ class TestSummarize:
 
     @patch("newsfeed.summarizer.vertexai.init")
     @patch("newsfeed.summarizer.GenerativeModel")
-    def test_drops_tags_outside_allowed_vocabulary(self, model_cls, init):
+    def test_許可語彙外のタグを除外する(self, model_cls, init):
         model_cls.return_value = _mock_model(
             json.dumps({"summary": "x", "tags": ["ai", "unknown-tag"]}),
         )
@@ -38,7 +38,7 @@ class TestSummarize:
 
     @patch("newsfeed.summarizer.vertexai.init")
     @patch("newsfeed.summarizer.GenerativeModel")
-    def test_empty_tags_list_is_valid(self, model_cls, init):
+    def test_空のタグリストは正当とする(self, model_cls, init):
         model_cls.return_value = _mock_model(
             json.dumps({"summary": "x", "tags": []}),
         )
@@ -47,7 +47,7 @@ class TestSummarize:
 
     @patch("newsfeed.summarizer.vertexai.init")
     @patch("newsfeed.summarizer.GenerativeModel")
-    def test_empty_summary_raises(self, model_cls, init):
+    def test_空の要約はValueErrorになる(self, model_cls, init):
         model_cls.return_value = _mock_model(
             json.dumps({"summary": "", "tags": []}),
         )
@@ -56,7 +56,7 @@ class TestSummarize:
 
     @patch("newsfeed.summarizer.vertexai.init")
     @patch("newsfeed.summarizer.GenerativeModel")
-    def test_non_list_tags_raises(self, model_cls, init):
+    def test_リストでないtagsはValueErrorになる(self, model_cls, init):
         model_cls.return_value = _mock_model(
             json.dumps({"summary": "x", "tags": "not-a-list"}),
         )

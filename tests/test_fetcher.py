@@ -89,63 +89,51 @@ _RSS_EMPTY_CONTENT_ENCODED = """<?xml version="1.0"?>
 </channel></rss>"""
 
 
-class TestEntryBody:
-    """extract_entry_body の本文解決仕様を実フィード解釈 (feedparser) で検証する。"""
-
-    def test_content_is_used_over_summary(self):
-        """content タグが在る記事は content を本文とし summary を使わないことを検証する。"""
+class Test本文の解決:
+    def test_contentタグがある記事はcontentを本文としsummaryを使わない(self):
         entry = _first_entry(_ATOM_CONTENT_AND_SUMMARY)
         assert extract_entry_body(entry, "Title") == "full body"
 
-    def test_summary_is_used_when_content_tag_absent(self):
-        """content タグが無い記事は description (summary) を本文とすることを検証する。"""
+    def test_contentタグが無い記事はdescriptionを本文とする(self):
         entry = _first_entry(_RSS_SUMMARY_ONLY)
         assert extract_entry_body(entry, "Title") == "short summary"
 
-    def test_title_is_used_when_content_tag_absent_and_summary_empty(self):
-        """content タグが無く summary も空の記事のみ title を本文とする正当なフォールバックを検証する。"""
+    def test_contentタグが無くsummaryも空の記事のみtitleを本文とする(self):
         entry = _first_entry(_RSS_NO_CONTENT_NO_SUMMARY)
         assert extract_entry_body(entry, "My Title") == "My Title"
 
     @pytest.mark.parametrize("xml", [
-        _ATOM_EMPTY_CONTENT,
-        _ATOM_SELF_CLOSING_CONTENT,
-        _RSS_EMPTY_CONTENT_ENCODED,
-    ], ids=["atom-empty-content", "atom-self-closing-content", "rss-empty-content-encoded"])
-    def test_empty_content_tag_raises_malformed_entry_error(self, xml):
-        """content タグが在るのに本文が空の記事は不正として MalformedEntryError を送出することを検証する。
-
-        title への黙フォールバックを廃止し、summary が在っても本文に流用せず
-        取得失敗として表面化させる仕様。
-
-        Args:
-            xml: content タグが在るが本文値が空の実 RSS/Atom フィード XML。
-        """
+        pytest.param(_ATOM_EMPTY_CONTENT, id="Atom の空 content タグのとき、MalformedEntryError になる"),
+        pytest.param(_ATOM_SELF_CLOSING_CONTENT, id="Atom の自己終了 content タグのとき、MalformedEntryError になる"),
+        pytest.param(_RSS_EMPTY_CONTENT_ENCODED, id="RSS の空 content:encoded のとき、MalformedEntryError になる"),
+    ])
+    def test_contentタグがあるのに本文が空ならMalformedEntryErrorになる(self, xml):
+        # title への黙フォールバックを廃止し、summary が在っても本文に流用せず取得失敗として表面化させる。
         entry = _first_entry(xml)
         with pytest.raises(MalformedEntryError):
             extract_entry_body(entry, "Fallback Title")
 
 
-class TestHtmlToPlainText:
-    def test_strips_inline_tags(self):
+class TestHTMLからプレーンテキストへの変換:
+    def test_インラインタグを除去する(self):
         assert _html_to_plain_text("<b>bold</b> and <i>italic</i>") == "bold and italic"
 
-    def test_block_tags_produce_line_breaks(self):
+    def test_ブロックタグは改行になる(self):
         assert _html_to_plain_text("<p>A</p><p>B</p>") == "A\nB"
 
-    def test_collapses_whitespace(self):
+    def test_連続する空白を畳む(self):
         assert _html_to_plain_text("<p>  leading trailing  </p>") == "leading trailing"
 
-    def test_decodes_html_entities(self):
+    def test_HTMLエンティティをデコードする(self):
         assert _html_to_plain_text("<p>foo &amp; bar</p>") == "foo & bar"
 
 
-class TestParseDate:
-    def test_returns_none_when_missing(self):
+class Test公開日時のパース:
+    def test_日付キーが無いときNoneを返す(self):
         entry = {}
         assert _parse_date(entry) is None
 
-    def test_parses_time_struct_as_utc(self):
+    def test_time_structをUTCのdatetimeとして解釈する(self):
         t = time.struct_time((2025, 6, 15, 12, 0, 0, 6, 166, 0))
         entry = {"published_parsed": t}
         result = _parse_date(entry)
@@ -156,20 +144,20 @@ class TestParseDate:
         assert result.day == 15
 
 
-class TestFetchAll:
+class Test全フィードソースの取得:
     def _make_feed(self, entries):
         feed = MagicMock()
         feed.entries = entries
         return feed
 
     @patch("newsfeed.fetcher.feedparser.parse")
-    def test_skips_entries_without_source_url(self, mock_parse):
+    def test_source_urlが無いentryはスキップする(self, mock_parse):
         mock_parse.return_value = self._make_feed([{"title": "No URL entry"}])
         result = fetch_all([FeedSource("src1", "http://example.com/feed")])
         assert result == []
 
     @patch("newsfeed.fetcher.feedparser.parse")
-    def test_skips_entries_without_title(self, mock_parse):
+    def test_titleが空のentryはスキップする(self, mock_parse):
         mock_parse.return_value = self._make_feed([
             {"link": "http://example.com/1", "title": ""},
         ])
@@ -177,7 +165,7 @@ class TestFetchAll:
         assert result == []
 
     @patch("newsfeed.fetcher.feedparser.parse")
-    def test_raises_when_all_sources_fail(self, mock_parse):
+    def test_全ソースが失敗するとFetchErrorになる(self, mock_parse):
         mock_parse.side_effect = Exception("network error")
         sources = [
             FeedSource("bad1", "http://bad1.example.com/feed"),
@@ -187,7 +175,7 @@ class TestFetchAll:
             fetch_all(sources)
 
     @patch("newsfeed.fetcher.feedparser.parse")
-    def test_continues_when_at_least_one_source_succeeds(self, mock_parse):
+    def test_少なくとも1ソース成功すれば部分取得として継続する(self, mock_parse):
         valid_entry = {
             "link": "http://example.com/good",
             "title": "Good Article",
@@ -209,40 +197,37 @@ class TestFetchAll:
         assert result[0].body == "body"
 
     @pytest.mark.parametrize("entry, expected_urls", [
-        ({"link": "http://example.com/link", "title": "T"},
-         ["http://example.com/link"]),
-        ({"id": "urn:uuid:abc", "title": "T"},
-         ["urn:uuid:abc"]),
-        ({"link": "http://example.com/link", "id": "urn:uuid:abc", "title": "T"},
-         ["http://example.com/link"]),
-        ({"title": "T"},
-         []),
-    ], ids=["link-only", "id-only", "link-and-id-prefers-link", "neither-skipped"])
-    def test_source_url_resolves_link_then_id_then_skips(self, entry, expected_urls):
-        """source_url は link→id の順に解決し、両者欠落の entry は item 化しないことを検証する。
-
-        Args:
-            entry: feedparser エントリを模した辞書。
-            expected_urls: 生成される FetchedItem の source_url 列 (除外時は空リスト)。
-        """
+        pytest.param({"link": "http://example.com/link", "title": "T"},
+                     ["http://example.com/link"],
+                     id="link だけのとき、link を source_url にする"),
+        pytest.param({"id": "urn:uuid:abc", "title": "T"},
+                     ["urn:uuid:abc"],
+                     id="id だけのとき、id を source_url にする"),
+        pytest.param({"link": "http://example.com/link", "id": "urn:uuid:abc", "title": "T"},
+                     ["http://example.com/link"],
+                     id="link と id が両方あるとき、link を優先する"),
+        pytest.param({"title": "T"},
+                     [],
+                     id="link も id も無いとき、item 化しない"),
+    ])
+    def test_source_urlはlinkを優先しidにフォールバックする(self, entry, expected_urls):
         with patch("newsfeed.fetcher.feedparser.parse") as mock_parse:
             mock_parse.return_value = self._make_feed([entry])
             result = fetch_all([FeedSource("src1", "http://example.com/feed")])
         assert [item.source_url for item in result] == expected_urls
 
-    def test_empty_source_list_returns_empty_without_error(self):
-        """ソース 0 件では全面失敗と区別され、FetchError を送出せず空リストを返すことを検証する。"""
+    def test_ソース0件はFetchErrorを出さず空リストを返す(self):
+        # ソース 0 件は「全ソース失敗」とは区別し、FetchError にしない。
         assert fetch_all([]) == []
 
-    def test_empty_feed_returns_empty_without_error(self):
-        """取得は成功するが entries 0 件のフィードは全面失敗と区別され、空リストを返すことを検証する。"""
+    def test_entries0件のフィードは空リストを返す(self):
+        # 取得成功だが entries 0 件は「全ソース失敗」とは区別する。
         with patch("newsfeed.fetcher.feedparser.parse") as mock_parse:
             mock_parse.return_value = self._make_feed([])
             result = fetch_all([FeedSource("src1", "http://example.com/feed")])
         assert result == []
 
-    def test_returns_all_valid_entries_from_single_source(self):
-        """単一ソースに含まれる複数の有効 entry が全て FetchedItem 化されることを検証する。"""
+    def test_単一ソースの複数有効entryを全てFetchedItem化する(self):
         entries = [
             {"link": "http://example.com/0", "title": "Article 0"},
             {"link": "http://example.com/1", "title": "Article 1"},
@@ -262,17 +247,13 @@ class TestFetchAll:
             "Article 2",
         ]
 
-    def test_source_with_malformed_entry_escalates_to_fetch_error_when_sole_source(self):
-        """不正エントリ (content 在り・本文空) を含むソースは取得失敗として扱われ、
-        単独ソースなら全面失敗として FetchError に昇格することを検証する。
-        """
+    def test_不正エントリを含む単独ソースはFetchErrorに昇格する(self):
         feed = feedparser.parse(_ATOM_EMPTY_CONTENT)
         with patch("newsfeed.fetcher.feedparser.parse", return_value=feed):
             with pytest.raises(FetchError):
                 fetch_all([FeedSource("only", "http://example.com/feed")])
 
-    def test_malformed_entry_in_one_source_does_not_fail_other_sources(self):
-        """1 ソースの不正エントリは他ソースの取得を妨げず、部分取得として継続することを検証する。"""
+    def test_1ソースの不正エントリは他ソースの取得を妨げない(self):
         bad_feed = feedparser.parse(_ATOM_EMPTY_CONTENT)
         good_feed = feedparser.parse(_ATOM_CONTENT_AND_SUMMARY)
         with patch("newsfeed.fetcher.feedparser.parse", side_effect=[bad_feed, good_feed]):

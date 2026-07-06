@@ -21,10 +21,10 @@ def _summarizer(summary: str = "要約", tags=None) -> MagicMock:
     return m
 
 
-class TestFetchAndPublish:
+class Test取得から配信までの処理:
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_reserves_before_summarize_and_publish(self, mock_ulid, mock_fetch_all):
+    def test_要約とpublishの前に予約する(self, mock_ulid, mock_fetch_all):
         mock_fetch_all.return_value = [_item(1)]
         mock_ulid.return_value = "01ABC"
 
@@ -42,7 +42,7 @@ class TestFetchAndPublish:
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_skips_when_already_reserved(self, mock_ulid, mock_fetch_all):
+    def test_既に予約済みの記事はスキップする(self, mock_ulid, mock_fetch_all):
         mock_fetch_all.return_value = [_item(1), _item(2)]
         mock_ulid.return_value = "01ABC"
 
@@ -60,7 +60,7 @@ class TestFetchAndPublish:
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_releases_marker_on_summarize_failure(self, mock_ulid, mock_fetch_all):
+    def test_要約失敗時はマーカーを解放する(self, mock_ulid, mock_fetch_all):
         mock_fetch_all.return_value = [_item(1)]
         mock_ulid.return_value = "01ABC"
 
@@ -78,7 +78,7 @@ class TestFetchAndPublish:
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_releases_marker_on_publish_failure(self, mock_ulid, mock_fetch_all):
+    def test_publish失敗時はマーカーを解放する(self, mock_ulid, mock_fetch_all):
         mock_fetch_all.return_value = [_item(1)]
         mock_ulid.return_value = "01ABC"
 
@@ -95,7 +95,7 @@ class TestFetchAndPublish:
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_continues_processing_after_individual_failure(self, mock_ulid, mock_fetch_all):
+    def test_個別失敗後も残りの記事の処理を継続する(self, mock_ulid, mock_fetch_all):
         mock_fetch_all.return_value = [_item(1), _item(2), _item(3)]
         mock_ulid.return_value = "01ABC"
 
@@ -113,13 +113,7 @@ class TestFetchAndPublish:
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_publishes_each_item_and_releases_none_when_all_succeed(self, mock_ulid, mock_fetch_all):
-        """全件成功時は各記事を publish し、マーカー解放を行わないことを検証する。
-
-        Args:
-            mock_ulid: ULID を差し替える patch モック。
-            mock_fetch_all: fetch_all を差し替える patch モック。
-        """
+    def test_全件成功時は各記事をpublishしマーカーを解放しない(self, mock_ulid, mock_fetch_all):
         mock_fetch_all.return_value = [_item(1), _item(2)]
         mock_ulid.return_value = "01ABC"
 
@@ -135,7 +129,7 @@ class TestFetchAndPublish:
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_event_carries_summary_and_tags(self, mock_ulid, mock_fetch_all):
+    def test_イベントに要約とタグを載せる(self, mock_ulid, mock_fetch_all):
         mock_fetch_all.return_value = [_item(1)]
         mock_ulid.return_value = "01ABC"
 
