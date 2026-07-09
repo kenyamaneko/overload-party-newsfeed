@@ -22,8 +22,8 @@ def _event(**overrides) -> ArticleEvent:
     return ArticleEvent(**defaults)
 
 
-class TestArticlePublisher:
-    def test_publishes_to_configured_topic(self):
+class TestArticlePublisherによる配信:
+    def test_設定されたトピックにpublishする(self):
         client = MagicMock()
         client.topic_path.return_value = "projects/my-project/topics/" + TOPIC_NAME
         client.publish.return_value.result.return_value = "msg-id"
@@ -34,8 +34,7 @@ class TestArticlePublisher:
         client.topic_path.assert_called_once_with("my-project", TOPIC_NAME)
         assert client.publish.call_args[0][0] == "projects/my-project/topics/" + TOPIC_NAME
 
-    def test_payload_matches_news_article_collected_event_contract(self):
-        """news リポの ArticleCollectedEvent と形状が一致すること。"""
+    def test_payloadがnewsのArticleCollectedEvent契約と一致する(self):
         client = MagicMock()
         client.publish.return_value.result.return_value = "msg-id"
 
@@ -66,7 +65,7 @@ class TestArticlePublisher:
             }
         ]
 
-    def test_serializes_event_as_utf8_json(self):
+    def test_イベントをUTF8のJSONとして直列化する(self):
         client = MagicMock()
         client.publish.return_value.result.return_value = "msg-id"
 
@@ -76,7 +75,7 @@ class TestArticlePublisher:
         decoded = json.loads(client.publish.call_args[0][1].decode("utf-8"))
         assert decoded["translations"][0]["title"] == "日本語タイトル"
 
-    def test_omits_source_published_at_when_none(self):
+    def test_source_published_atがNoneのとき出力から省く(self):
         client = MagicMock()
         client.publish.return_value.result.return_value = "msg-id"
 
@@ -86,7 +85,7 @@ class TestArticlePublisher:
         decoded = json.loads(client.publish.call_args[0][1].decode("utf-8"))
         assert "source_published_at" not in decoded
 
-    def test_publish_failure_propagates_exception(self):
+    def test_publish失敗時は例外を伝播する(self):
         client = MagicMock()
         client.publish.return_value.result.side_effect = RuntimeError("ack timeout")
 
