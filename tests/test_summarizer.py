@@ -99,7 +99,7 @@ class Test記事の要約:
 
     @patch("newsfeed.summarizer.vertexai.init")
     @patch("newsfeed.summarizer.GenerativeModel")
-    def test_tagsに数値42が混ざるとき許容タグaiだけが残る(self, model_cls, init):
+    def test_タグに数値42が混ざるとき許容タグaiだけが残る(self, model_cls, init):
         model_cls.return_value = _mock_model(
             json.dumps({"summary": "x", "tags": ["ai", 42]}),
         )

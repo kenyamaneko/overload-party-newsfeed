@@ -18,7 +18,7 @@ class Testエントリポイントの実行:
         assert "CRITICAL" in out
         assert "vertex down" in out
 
-    def test_パイプラインが成功したとき例外やSystemExitを出さず完了する(self, preserve_root_logger):
+    def test_パイプラインが成功したとき例外や終了コードを出さず完了する(self, preserve_root_logger):
         with patch("main.run") as mock_run, \
                 patch.dict(os.environ, {"APP_ENV": "local"}, clear=True):
             main.main()
