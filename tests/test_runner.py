@@ -146,3 +146,16 @@ class Test取得から配信までの処理:
         assert event.tags == ["ai", "compute"]
         assert event.title == "Article 1"
         assert event.body == "body1"
+
+    @patch("newsfeed.runner.fetch_all")
+    def test_取得記事が0件のとき要約も配信も行われず正常終了する(self, mock_fetch_all):
+        mock_fetch_all.return_value = []
+
+        dedup = MagicMock()
+        summarizer = _summarizer()
+        publisher = MagicMock()
+
+        _fetch_and_publish(dedup, summarizer, publisher)
+
+        summarizer.summarize.assert_not_called()
+        publisher.publish.assert_not_called()
