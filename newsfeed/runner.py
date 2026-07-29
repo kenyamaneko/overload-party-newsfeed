@@ -67,7 +67,8 @@ def _fetch_and_publish(
             summary = summarizer.summarize(item.title, item.body)
             event = convert_to_event(article_id, item, summary)
             publisher.publish(event)
-        except Exception as e:
+        # 1 記事の失敗を他記事へ波及させないため、種別を問わず捕捉する
+        except Exception as e:  # noqa: BLE001
             # Vertex AI / publish 失敗時は次周期で再試行させるためマーカー解放
             dedup.release(item.source_url)
             errors += 1

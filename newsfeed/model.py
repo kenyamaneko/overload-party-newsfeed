@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -15,7 +14,7 @@ class FetchedItem:
     source_url: str
     title: str
     body: str
-    source_published_at: Optional[datetime] = None
+    source_published_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -41,7 +40,7 @@ class ArticleEvent:
     title: str
     summary: str
     body: str
-    source_published_at: Optional[datetime] = None
+    source_published_at: datetime | None = None
     lang: str = "ja"
 
     def to_dict(self) -> dict:

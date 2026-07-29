@@ -39,7 +39,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install ruff
-        run: pip install ruff
+        run: pip install -r requirements-dev.txt
       - name: Run ruff check
         run: ruff check newsfeed/ tests/
 

@@ -9,15 +9,15 @@ from newsfeed.publisher import TOPIC_NAME, ArticlePublisher
 
 
 def _event(**overrides) -> ArticleEvent:
-    defaults = dict(
-        article_id="01ABC",
-        source="aws",
-        source_url="https://example.com/a",
-        tags=["ai"],
-        title="Title",
-        summary="Summary",
-        body="body",
-    )
+    defaults = {
+        "article_id": "01ABC",
+        "source": "aws",
+        "source_url": "https://example.com/a",
+        "tags": ["ai"],
+        "title": "Title",
+        "summary": "Summary",
+        "body": "body",
+    }
     defaults.update(overrides)
     return ArticleEvent(**defaults)
 
@@ -92,3 +92,13 @@ class TestArticlePublisherによる配信:
         publisher = ArticlePublisher("my-project", client=client)
         with pytest.raises(RuntimeError, match="ack timeout"):
             publisher.publish(_event())
+
+    def test_langをenに上書きしたイベントを配信するとtranslationsのlangがenになる(self):
+        client = MagicMock()
+        client.publish.return_value.result.return_value = "msg-id"
+
+        publisher = ArticlePublisher("my-project", client=client)
+        publisher.publish(_event(lang="en"))
+
+        decoded = json.loads(client.publish.call_args[0][1].decode("utf-8"))
+        assert decoded["translations"][0]["lang"] == "en"
