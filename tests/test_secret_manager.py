@@ -11,7 +11,7 @@ class TestSecretの取得:
     def test_secretを取得すると値がutf8の文字列で返る(self, client_cls):
         client = MagicMock()
         response = MagicMock()
-        response.payload.data = "ぱすわーど".encode("utf-8")
+        response.payload.data = "ぱすわーど".encode()
         client.access_secret_version.return_value = response
         client_cls.return_value = client
 

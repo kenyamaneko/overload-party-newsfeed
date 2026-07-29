@@ -249,9 +249,8 @@ class Test全フィードソースの取得:
 
     def test_不正エントリを含む単独ソースはFetchErrorに昇格する(self):
         feed = feedparser.parse(_ATOM_EMPTY_CONTENT)
-        with patch("newsfeed.fetcher.feedparser.parse", return_value=feed):
-            with pytest.raises(FetchError):
-                fetch_all([FeedSource("only", "http://example.com/feed")])
+        with patch("newsfeed.fetcher.feedparser.parse", return_value=feed), pytest.raises(FetchError):
+            fetch_all([FeedSource("only", "http://example.com/feed")])
 
     def test_1ソースの不正エントリは他ソースの取得を妨げない(self):
         bad_feed = feedparser.parse(_ATOM_EMPTY_CONTENT)

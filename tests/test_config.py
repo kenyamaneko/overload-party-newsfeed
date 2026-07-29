@@ -37,9 +37,8 @@ class Test必須環境変数の検証:
         ],
     )
     def test_必須環境変数が欠けるとValueErrorになる(self, env, missing):
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match=missing):
-                load_config()
+        with patch.dict(os.environ, env, clear=True), pytest.raises(ValueError, match=missing):
+            load_config()
 
 
 class TestAPP_ENVの値の検証:
@@ -76,9 +75,8 @@ class TestAPP_ENVの値の検証:
     )
     def test_localとproduction以外のAPP_ENVを弾く(self, invalid):
         env = _base_env(APP_ENV=invalid)
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match="APP_ENV"):
-                load_config()
+        with patch.dict(os.environ, env, clear=True), pytest.raises(ValueError, match="APP_ENV"):
+            load_config()
 
 
 class Testローカルモードの設定読み込み:
@@ -95,9 +93,8 @@ class Testローカルモードの設定読み込み:
 
     def test_localでUPSTASH_REDIS_URLが無いとValueErrorになる(self):
         env = _base_env(APP_ENV="local")
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match="UPSTASH_REDIS_URL"):
-                load_config()
+        with patch.dict(os.environ, env, clear=True), pytest.raises(ValueError, match="UPSTASH_REDIS_URL"):
+            load_config()
 
 
 class Testproductionモードの設定読み込み:

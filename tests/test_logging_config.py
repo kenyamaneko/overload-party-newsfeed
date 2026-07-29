@@ -23,7 +23,7 @@ class Test本番環境のログ出力:
         try:
             raise RuntimeError("boom")
         except RuntimeError:
-            logger.error("failed", exc_info=True)
+            logger.exception("failed")
 
         decoded = json.loads(capsys.readouterr().out.strip())
         assert "RuntimeError" in decoded["message"]
