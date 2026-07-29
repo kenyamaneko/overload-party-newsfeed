@@ -3,7 +3,6 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from typing import Optional
 
 import feedparser
 
@@ -68,7 +67,8 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
                 count += 1
             logger.info("fetcher: %s — fetched %d items", src.name, count)
             success_count += 1
-        except Exception as e:
+        # 1 ソースの失敗を他ソースへ波及させないため、種別を問わず捕捉する
+        except Exception as e:  # noqa: BLE001
             logger.error("fetcher: failed to parse feed %s (%s): %s", src.name, src.url, e)
             failure_count += 1
 
@@ -111,7 +111,7 @@ def extract_entry_body(entry, title: str) -> str:
     return body if body else title
 
 
-def _parse_date(entry) -> Optional[datetime]:
+def _parse_date(entry) -> datetime | None:
     t = entry.get("published_parsed")
     if t is None:
         return None

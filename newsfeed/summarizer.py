@@ -14,6 +14,11 @@ from newsfeed.model import SummarizeResult
 
 logger = logging.getLogger(__name__)
 
+
+class SummarizeError(ValueError):
+    """要約結果が仕様の形式を満たさない場合に送出されます。"""
+
+
 _MODEL = "gemini-2.5-flash"
 _MAX_BODY_CHARS = 4000  # プロンプト爆発抑止
 
@@ -69,9 +74,9 @@ def _parse_response(raw: str) -> SummarizeResult:
     raw_tags = data.get("tags")
 
     if not isinstance(summary, str) or not summary:
-        raise ValueError(f"summarizer returned invalid summary: {raw!r}")
+        raise SummarizeError(f"summarizer returned invalid summary: {raw!r}")
     if not isinstance(raw_tags, list):
-        raise ValueError(f"summarizer returned non-list tags: {raw!r}")
+        raise SummarizeError(f"summarizer returned non-list tags: {raw!r}")
 
     tags = [t for t in raw_tags if isinstance(t, str) and t in _ALLOWED_TAGS]
     return SummarizeResult(summary=summary, tags=tags)

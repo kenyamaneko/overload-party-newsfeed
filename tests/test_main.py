@@ -9,9 +9,9 @@ import main
 class Testエントリポイントの実行:
     def test_パイプラインが例外で失敗したときCRITICALログを出し終了コード1で終了する(self, capsys, preserve_root_logger):
         with patch("main.run", side_effect=RuntimeError("vertex down")), \
-                patch.dict(os.environ, {"APP_ENV": "local"}, clear=True):
-            with pytest.raises(SystemExit) as excinfo:
-                main.main()
+                patch.dict(os.environ, {"APP_ENV": "local"}, clear=True), \
+                pytest.raises(SystemExit) as excinfo:
+            main.main()
 
         assert excinfo.value.code == 1
         out = capsys.readouterr().out

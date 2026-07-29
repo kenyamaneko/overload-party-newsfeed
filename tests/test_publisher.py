@@ -9,15 +9,15 @@ from newsfeed.publisher import TOPIC_NAME, ArticlePublisher
 
 
 def _event(**overrides) -> ArticleEvent:
-    defaults = dict(
-        article_id="01ABC",
-        source="aws",
-        source_url="https://example.com/a",
-        tags=["ai"],
-        title="Title",
-        summary="Summary",
-        body="body",
-    )
+    defaults = {
+        "article_id": "01ABC",
+        "source": "aws",
+        "source_url": "https://example.com/a",
+        "tags": ["ai"],
+        "title": "Title",
+        "summary": "Summary",
+        "body": "body",
+    }
     defaults.update(overrides)
     return ArticleEvent(**defaults)
 
