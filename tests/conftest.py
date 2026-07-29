@@ -2,6 +2,8 @@
 import logging
 
 import pytest
+import redis
+from testcontainers.redis import RedisContainer
 
 
 @pytest.fixture
@@ -20,3 +22,29 @@ def preserve_root_logger():
     yield
     root.handlers[:] = handlers
     root.setLevel(level)
+
+
+@pytest.fixture(scope="session")
+def valkey_url():
+    """テストセッション全体で共有する Valkey container の接続 URL。
+
+    Yields:
+        str: 起動した container への redis:// 接続 URL。
+    """
+    with RedisContainer("valkey/valkey:8-alpine") as valkey:
+        host = valkey.get_container_host_ip()
+        port = valkey.get_exposed_port(valkey.port)
+        yield f"redis://{host}:{port}"
+
+
+@pytest.fixture
+def redis_client(valkey_url):
+    """テストごとに FLUSHDB 済みの Valkey クライアントを用意する。
+
+    Yields:
+        redis.Redis: FLUSHDB 済みのクライアント。テスト終了時に close する。
+    """
+    c = redis.from_url(valkey_url, decode_responses=True)
+    c.flushdb()
+    yield c
+    c.close()
