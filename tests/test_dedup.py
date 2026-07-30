@@ -1,48 +1,19 @@
 """DedupStore の結合テスト。
 
 Valkey を testcontainers で起動して実挙動を検証する (matchmaking の
-redis_queue_test.go と同じ方針)。各テストは client fixture の FLUSHDB で分離するため、
-container は session に 1 つで足りる。
+redis_queue_test.go と同じ方針)。container は conftest.py の session fixture を
+test_runner.py と共有し、各テストは redis_client fixture の FLUSHDB で分離する。
 """
+import time
+
 import pytest
-import redis
-from testcontainers.redis import RedisContainer
 
 from newsfeed.dedup import DedupStore
 
 
-@pytest.fixture(scope="session")
-def start_valkey_container():
-    """session 全体で共有する Valkey container を起動する。
-
-    Yields:
-        str: 起動した container への redis:// 接続 URL。
-    """
-    with RedisContainer("valkey/valkey:8-alpine") as valkey:
-        host = valkey.get_container_host_ip()
-        port = valkey.get_exposed_port(valkey.port)
-        yield f"redis://{host}:{port}"
-
-
 @pytest.fixture
-def client(start_valkey_container):
-    """テストごとに FLUSHDB 済みの Valkey クライアントを用意する。
-
-    Args:
-        start_valkey_container: session fixture が起動した Valkey container の接続 URL。
-
-    Yields:
-        redis.Redis: FLUSHDB 済みのクライアント。テスト終了時に close する。
-    """
-    c = redis.from_url(start_valkey_container, decode_responses=True)
-    c.flushdb()
-    yield c
-    c.close()
-
-
-@pytest.fixture
-def store(client):
-    return DedupStore(client)
+def store(redis_client):
+    return DedupStore(redis_client)
 
 
 class TestURLの予約:
@@ -57,11 +28,20 @@ class TestURLの予約:
         assert store.reserve("https://example.com/a") is True
         assert store.reserve("https://example.com/b") is True
 
-    def test_予約キーに30日以内のTTLを設定する(self, client, store):
+    def test_予約キーに30日以内のTTLを設定する(self, redis_client, store):
         store.reserve("https://example.com/a")
-        ttl = client.ttl("newsfeed:seen:https://example.com/a")
+        ttl = redis_client.ttl("newsfeed:seen:https://example.com/a")
         # TTL は設定済み (> 0) かつ上限 30 日 (2592000 秒) 以下
         assert 0 < ttl <= 30 * 24 * 60 * 60
+
+    def test_TTL経過後は同一URLを再予約できる(self, store, monkeypatch):
+        # production の TTL (30日) を待てないため、production 経路 (reserve() 内部)
+        # に短い TTL を注入して期限切れを実際に発生させる
+        monkeypatch.setattr("newsfeed.dedup._TTL_SECONDS", 1)
+
+        assert store.reserve("https://example.com/a") is True
+        time.sleep(1.2)
+        assert store.reserve("https://example.com/a") is True
 
 
 class TestURLの解放:

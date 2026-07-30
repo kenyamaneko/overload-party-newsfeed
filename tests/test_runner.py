@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from newsfeed.dedup import DedupStore
 from newsfeed.model import FetchedItem, SummarizeResult
 from newsfeed.runner import PublishError, _fetch_and_publish
 
@@ -21,42 +22,52 @@ def _summarizer(summary: str = "要約", tags=None) -> MagicMock:
     return m
 
 
+class _RecordingPublisher:
+    """publish された event を記録するだけの fake。"""
+
+    def __init__(self) -> None:
+        self.published_events: list = []
+
+    def publish(self, event) -> None:
+        self.published_events.append(event)
+
+
+@pytest.fixture
+def dedup_store(redis_client) -> DedupStore:
+    return DedupStore(redis_client)
+
+
 class Test取得から配信までの処理:
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_要約とpublishの前に予約する(self, mock_ulid, mock_fetch_all):
+    def test_新規記事は予約後にpublishされ予約マーカーが実Redisに残る(self, mock_ulid, mock_fetch_all, dedup_store):
         mock_fetch_all.return_value = [_item(1)]
         mock_ulid.return_value = "01ABC"
 
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
         summarizer = _summarizer()
-        publisher = MagicMock()
+        publisher = _RecordingPublisher()
 
-        _fetch_and_publish(dedup, summarizer, publisher)
+        _fetch_and_publish(dedup_store, summarizer, publisher)
 
-        # 予約 → 要約 → publish の順で呼ばれること
-        dedup.reserve.assert_called_once_with("https://example.com/1")
-        summarizer.summarize.assert_called_once()
-        publisher.publish.assert_called_once()
+        assert [e.source_url for e in publisher.published_events] == ["https://example.com/1"]
+        # reserve() の再呼び出しが False を返すことで、予約マーカーが実際に残っていることを確認する
+        assert dedup_store.reserve("https://example.com/1") is False
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
-    def test_既に予約済みの記事はスキップする(self, mock_ulid, mock_fetch_all):
+    def test_予約済みの記事と新規記事が混在するとき新規記事のみpublishされる(self, mock_ulid, mock_fetch_all, dedup_store):
+        # 1 件目を事前に予約済み (= 既見) にしておく
+        dedup_store.reserve("https://example.com/1")
+
         mock_fetch_all.return_value = [_item(1), _item(2)]
         mock_ulid.return_value = "01ABC"
 
-        dedup = MagicMock()
-        # 1 件目は seen、2 件目は新規
-        dedup.reserve.side_effect = [False, True]
         summarizer = _summarizer()
-        publisher = MagicMock()
+        publisher = _RecordingPublisher()
 
-        _fetch_and_publish(dedup, summarizer, publisher)
+        _fetch_and_publish(dedup_store, summarizer, publisher)
 
-        # 既に seen の記事は要約/publish に進まない
-        assert summarizer.summarize.call_count == 1
-        assert publisher.publish.call_count == 1
+        assert [e.source_url for e in publisher.published_events] == ["https://example.com/2"]
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
