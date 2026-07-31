@@ -4,6 +4,8 @@
 
 詳細は [サービス設計書](docs/ARCHITECTURE.md) を参照。
 
+[テスト観点カタログ](https://kenyamaneko.github.io/overload-party-newsfeed/): テスト名から生成した、テスト済みの観点の一覧。
+
 ## サービス間連携
 
 ```
