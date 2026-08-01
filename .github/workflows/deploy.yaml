@@ -1,5 +1,4 @@
 # 手動 dispatch で newsfeed イメージを build & push し、Cloud Run Job を更新する。
-# lint と test が通過してから deploy する。
 name: Deploy
 
 on:
@@ -22,39 +21,12 @@ env:
   DEPLOY_PROJECT: overload-party-dev
 
 jobs:
-  lint:
-    runs-on: ubicloud-standard-2
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install ruff
-        run: pip install -r requirements-dev.txt
-      - name: Run ruff check
-        run: ruff check newsfeed/ tests/
-
-  test:
-    runs-on: ubicloud-standard-2
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-dev.txt
-      # test_dedup.py は Testcontainers が Valkey を起動する (runner の Docker を使用)
-      - name: Run tests
-        run: pytest tests/ -v
+  ci:
+    uses: ./.github/workflows/ci.yaml
+    secrets: inherit
 
   deploy:
-    needs: [lint, test]
+    needs: ci
     runs-on: ubicloud-standard-2
     timeout-minutes: 30
     steps:
