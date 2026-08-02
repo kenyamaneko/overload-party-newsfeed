@@ -94,12 +94,12 @@ _RSS_EMPTY_SUMMARY_THEN_VALID = """<?xml version="1.0"?>
 </item>
 </channel></rss>"""
 
-_ATOM_EMPTY_CONTENT = """<?xml version="1.0" encoding="utf-8"?>
+_ATOM_EMPTY_CONTENT_WITH_SUMMARY = """<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <entry>
-    <title>Empty Content Article</title>
-    <link href="http://example.com/empty"/>
-    <summary>summary that must not become the body</summary>
+    <title>Empty Content With Summary Article</title>
+    <link href="http://example.com/empty-with-summary"/>
+    <summary>summary body</summary>
     <content type="html"></content>
   </entry>
 </feed>"""
@@ -109,7 +109,7 @@ _ATOM_SELF_CLOSING_CONTENT = """<?xml version="1.0" encoding="utf-8"?>
   <entry>
     <title>Self Closing Content Article</title>
     <link href="http://example.com/sc"/>
-    <summary>summary that must not become the body</summary>
+    <summary>summary body</summary>
     <content type="html"/>
   </entry>
 </feed>"""
@@ -120,10 +120,20 @@ _RSS_EMPTY_CONTENT_ENCODED = """<?xml version="1.0"?>
 <item>
   <title>Empty content:encoded Article</title>
   <link>http://example.com/rss-empty</link>
-  <description>description that must not become the body</description>
+  <description>description body</description>
   <content:encoded></content:encoded>
 </item>
 </channel></rss>"""
+
+_ATOM_EMPTY_CONTENT_AND_SUMMARY = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Empty Content Article</title>
+    <link href="http://example.com/empty"/>
+    <summary></summary>
+    <content type="html"></content>
+  </entry>
+</feed>"""
 
 
 class Test本文の解決:
@@ -135,21 +145,25 @@ class Test本文の解決:
         entry = _first_entry(_RSS_SUMMARY_ONLY)
         assert extract_entry_body(entry, "Title") == "short summary"
 
-    @pytest.mark.parametrize("xml", [
-        pytest.param(_ATOM_EMPTY_CONTENT, id="Atom の空 content タグのとき、MalformedEntryError になる"),
-        pytest.param(_ATOM_SELF_CLOSING_CONTENT, id="Atom の自己終了 content タグのとき、MalformedEntryError になる"),
-        pytest.param(_RSS_EMPTY_CONTENT_ENCODED, id="RSS の空 content:encoded のとき、MalformedEntryError になる"),
+    @pytest.mark.parametrize("xml, expected_body", [
+        pytest.param(_ATOM_EMPTY_CONTENT_WITH_SUMMARY, "summary body",
+                     id="Atom の content タグが空のとき、summary が本文になる"),
+        pytest.param(_ATOM_SELF_CLOSING_CONTENT, "summary body",
+                     id="Atom の content タグが自己終了のとき、summary が本文になる"),
+        pytest.param(_RSS_EMPTY_CONTENT_ENCODED, "description body",
+                     id="RSS の content:encoded が空のとき、description が本文になる"),
     ])
-    def test_contentタグがあるのに本文が空ならMalformedEntryErrorになる(self, xml):
+    def test_contentタグがあっても本文が空ならdescriptionを本文とする(self, xml, expected_body):
         entry = _first_entry(xml)
-        with pytest.raises(MalformedEntryError, match="content tag present but body is empty"):
-            extract_entry_body(entry, "Fallback Title")
+        assert extract_entry_body(entry, "Title") == expected_body
 
     @pytest.mark.parametrize("xml", [
         pytest.param(_RSS_NO_CONTENT_NO_SUMMARY, id="content も description も無いとき、MalformedEntryError になる"),
         pytest.param(_RSS_EMPTY_SUMMARY, id="content が無く description が空のとき、MalformedEntryError になる"),
         pytest.param(_RSS_MARKUP_ONLY_SUMMARY,
                      id="content が無く description がタグだけのとき、MalformedEntryError になる"),
+        pytest.param(_ATOM_EMPTY_CONTENT_AND_SUMMARY,
+                     id="content タグが空で description も空のとき、MalformedEntryError になる"),
     ])
     def test_contentもdescriptionも本文にならないときtitleで埋めずMalformedEntryErrorになる(self, xml):
         entry = _first_entry(xml)
@@ -287,14 +301,14 @@ class Test全フィードソースの取得:
         ]
 
     def test_全エントリの本文が空のソースは取得失敗として扱わない(self):
-        feed = feedparser.parse(_ATOM_EMPTY_CONTENT)
+        feed = feedparser.parse(_ATOM_EMPTY_CONTENT_AND_SUMMARY)
         with patch("newsfeed.fetcher.feedparser.parse", return_value=feed):
             result = fetch_all([FeedSource("only", "http://example.com/feed")])
         assert result.items == []
         assert result.failed_sources == []
 
     def test_本文が空の記事はソース名とタイトルを添えて記録する(self):
-        feed = feedparser.parse(_ATOM_EMPTY_CONTENT)
+        feed = feedparser.parse(_ATOM_EMPTY_CONTENT_AND_SUMMARY)
         with patch("newsfeed.fetcher.feedparser.parse", return_value=feed):
             result = fetch_all([FeedSource("only", "http://example.com/feed")])
         assert result.malformed_entries == [
@@ -309,6 +323,14 @@ class Test全フィードソースの取得:
             result = fetch_all([FeedSource("aws", "http://aws.example.com/feed")])
         assert result.malformed_entries == []
 
+    def test_contentが空でdescriptionに本文がある記事も取得できる(self, feed_server):
+        url = feed_server.serve_feed("/feed", _RSS_EMPTY_CONTENT_ENCODED)
+
+        result = fetch_all([FeedSource("google-cloud", url)])
+
+        assert [item.body for item in result.items] == ["description body"]
+        assert result.malformed_entries == []
+
     def test_本文が空の記事があっても同じソースの後続記事は取得できる(self):
         bad_then_good = feedparser.parse(_RSS_EMPTY_SUMMARY_THEN_VALID)
         with patch("newsfeed.fetcher.feedparser.parse", return_value=bad_then_good):
@@ -318,7 +340,7 @@ class Test全フィードソースの取得:
         assert result.failed_sources == []
 
     def test_1ソースの本文が空の記事は他ソースの取得を妨げない(self):
-        bad_feed = feedparser.parse(_ATOM_EMPTY_CONTENT)
+        bad_feed = feedparser.parse(_ATOM_EMPTY_CONTENT_AND_SUMMARY)
         good_feed = feedparser.parse(_ATOM_CONTENT_AND_SUMMARY)
         with patch("newsfeed.fetcher.feedparser.parse", side_effect=[bad_feed, good_feed]):
             result = fetch_all([
