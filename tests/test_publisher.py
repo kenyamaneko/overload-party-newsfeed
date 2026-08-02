@@ -7,7 +7,7 @@ import pytest
 from testcontainers.community.google import PubSubContainer
 
 from newsfeed.model import ArticleEvent
-from newsfeed.publisher import ArticlePublisher
+from newsfeed.publisher import ArticlePublisher, PublishError
 
 # production の TOPIC_NAME を import せず独立リテラルで持つ。トピック名が
 # production 側で変わった場合、下記の emulator テストは publish 先の
@@ -132,13 +132,15 @@ class TestArticlePublisherによる配信:
         decoded = json.loads(client.publish.call_args[0][1].decode("utf-8"))
         assert "source_published_at" not in decoded
 
-    def test_publish失敗時は例外を伝播する(self):
-        client = MagicMock()
-        client.publish.return_value.result.side_effect = RuntimeError("ack timeout")
+    def test_存在しないトピックへ配信すると配信の失敗になる(self, pubsub_emulator):
+        publisher_client = pubsub_emulator.get_publisher_client()
 
-        publisher = ArticlePublisher("my-project", client=client)
-        with pytest.raises(RuntimeError, match="ack timeout"):
-            publisher.publish(_event())
+        publisher = ArticlePublisher(f"test-{uuid.uuid4().hex}", client=publisher_client)
+        with pytest.raises(PublishError) as excinfo:
+            publisher.publish(_event(article_id="01XYZ"))
+
+        assert "failed to publish 01XYZ" in str(excinfo.value)
+        assert "not found" in str(excinfo.value).lower()
 
     def test_langをenに上書きしたイベントを配信するとtranslationsのlangがenになる(self):
         client = MagicMock()

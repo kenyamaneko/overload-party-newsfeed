@@ -19,6 +19,10 @@ class FetchError(Exception):
     """
 
 
+class FeedSourceError(Exception):
+    """1 つのフィードソースの取得に失敗した場合に送出されます。"""
+
+
 class MalformedEntryError(Exception):
     """本文が空のエントリを検出した場合に送出されます。
 
@@ -42,6 +46,27 @@ DEFAULT_SOURCES: list[FeedSource] = [
 ]
 
 _HTTP_ERROR_STATUS_MIN = 400
+
+
+def _parse_feed(src: FeedSource):
+    """フィードソースの URL を取得して解釈する。
+
+    Args:
+        src: 取得対象のフィードソース。
+
+    Returns:
+        feedparser が返した取得結果。
+
+    Raises:
+        FeedSourceError: 取得または解釈が例外で終わったとき。
+    """
+    try:
+        return feedparser.parse(src.url)
+    # feedparser は取得と解釈の失敗を例外にしない仕様のため、例外が出たら種別を問わず当該ソースの失敗とする
+    except Exception as e:
+        raise FeedSourceError(
+            f"fetcher: failed to read feed {src.name} ({src.url}): {e}"
+        ) from e
 
 
 def _find_fetch_failure(feed) -> str | None:
@@ -79,7 +104,7 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
     malformed_entries: list[MalformedEntry] = []
     for src in sources:
         try:
-            feed = feedparser.parse(src.url)
+            feed = _parse_feed(src)
             failure = _find_fetch_failure(feed)
             if failure is not None:
                 logger.error(
@@ -119,11 +144,9 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
                 count += 1
             logger.info("fetcher: %s — fetched %d items", src.name, count)
             success_count += 1
-        # 1 ソースの失敗を他ソースへ波及させないため、種別を問わず捕捉する
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                "fetcher: failed to read feed %s (%s): %s", src.name, src.url, e,
-            )
+        # 1 ソースの失敗を他ソースへ波及させないため、当該ソースの失敗として記録し次へ進む
+        except FeedSourceError as e:
+            logger.error("%s", e)
             failed_sources.append(src.name)
 
     if success_count == 0 and failed_sources:

@@ -1,6 +1,6 @@
 import time
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import feedparser
 import pytest
@@ -316,6 +316,27 @@ class Test全フィードソースの取得:
         assert [item.title for item in result.items] == ["Good Article"]
         assert [item.body for item in result.items] == ["body"]
         assert result.failed_sources == []
+
+    def test_フィードの解釈が例外で終わったソースは取得失敗として記録され他ソースは取得できる(self):
+        good_feed = feedparser.parse(_ATOM_CONTENT_AND_SUMMARY)
+        with patch(
+            "newsfeed.fetcher.feedparser.parse",
+            side_effect=[ValueError("url is malformed"), good_feed],
+        ):
+            result = fetch_all([
+                FeedSource("broken", "http://broken.example.com/feed"),
+                FeedSource("good", "http://good.example.com/feed"),
+            ])
+        assert result.failed_sources == ["broken"]
+        assert [item.source for item in result.items] == ["good"]
+
+    def test_エントリの走査で想定外の失敗が起きたとき取得失敗にせず呼び出し元へ送出する(self):
+        broken_entry = MagicMock()
+        broken_entry.get.side_effect = AttributeError("entry accessor is broken")
+        with patch("newsfeed.fetcher.feedparser.parse") as mock_parse:
+            mock_parse.return_value = _parsed_feed([broken_entry])
+            with pytest.raises(AttributeError, match="entry accessor is broken"):
+                fetch_all([FeedSource("src1", "http://example.com/feed")])
 
     def test_1ソースの本文が空の記事は他ソースの取得を妨げない(self):
         bad_feed = feedparser.parse(_ATOM_EMPTY_CONTENT)

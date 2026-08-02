@@ -16,8 +16,8 @@ from newsfeed.config import Config, load_config
 from newsfeed.dedup import DedupStore, create_client_from_url
 from newsfeed.fetcher import DEFAULT_SOURCES, fetch_all
 from newsfeed.model import ArticleEvent, FetchedItem, SummarizeResult
-from newsfeed.publisher import ArticlePublisher
-from newsfeed.summarizer import Summarizer
+from newsfeed.publisher import ArticlePublisher, PublishError
+from newsfeed.summarizer import SummarizeError, Summarizer
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +67,15 @@ def _fetch_and_publish(
             summary = summarizer.summarize(item.title, item.body)
             event = convert_to_event(article_id, item, summary)
             publisher.publish(event)
-        # 1 記事の失敗を他記事へ波及させないため、種別を問わず捕捉する
-        except Exception as e:  # noqa: BLE001
-            # Vertex AI / publish 失敗時は次周期で再試行させるためマーカー解放
+        # 1 記事の失敗を他記事へ波及させないため、当該記事の失敗として記録し次へ進む
+        except (SummarizeError, PublishError) as e:
+            # 次周期で再試行させるためマーカー解放
             dedup.release(item.source_url)
             errors += 1
             logger.error(
-                "processing failed: source=%s article_id=%s source_url=%s error=%s",
-                item.source, article_id, item.source_url, e,
+                "processing failed: source=%s article_id=%s source_url=%s "
+                "error_type=%s error=%s",
+                item.source, article_id, item.source_url, type(e).__name__, e,
             )
             continue
 
