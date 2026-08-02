@@ -38,8 +38,7 @@ class FeedSource:
 DEFAULT_SOURCES: list[FeedSource] = [
     FeedSource("aws", "https://aws.amazon.com/blogs/aws/feed/"),
     FeedSource("azure", "https://azure.microsoft.com/en-us/blog/feed/"),
-    FeedSource("google-cloud", "https://cloud.google.com/blog/feed"),
-    FeedSource("oci", "https://blogs.oracle.com/cloud-infrastructure/rss"),
+    FeedSource("google-cloud", "https://cloudblog.withgoogle.com/rss/"),
 ]
 
 _HTTP_ERROR_STATUS_MIN = 400

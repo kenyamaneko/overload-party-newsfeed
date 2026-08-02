@@ -1,6 +1,6 @@
 # overload-party-newsfeed
 
-クラウドニュース収集 Cloud Run Job。AWS / Azure / Google Cloud / Oracle Cloud の公式 RSS を定期取得し、Upstash Redis で同一 URL の再処理を抑止したうえで、Vertex AI Gemini で日本語要約・タグ付けして `news-article-collected` Pub/Sub トピックへ publish する。
+クラウドニュース収集 Cloud Run Job。AWS / Azure / Google Cloud の公式 RSS を定期取得し、Upstash Redis で同一 URL の再処理を抑止したうえで、Vertex AI Gemini で日本語要約・タグ付けして `news-article-collected` Pub/Sub トピックへ publish する。
 
 詳細は [サービス設計書](docs/ARCHITECTURE.md) を参照。
 
@@ -11,7 +11,7 @@
 ```
 Cloud Scheduler (2 時間おき)
   └─ Newsfeed (Cloud Run Job)
-       ├─ RSS (AWS / Azure / Google Cloud / OCI)
+       ├─ RSS (AWS / Azure / Google Cloud)
        ├─ Upstash Redis (source_url dedup, TTL 30d)
        ├─ Vertex AI Gemini 2.5 Flash (日本語要約 + タグ付け)
        └─ Pub/Sub publish
