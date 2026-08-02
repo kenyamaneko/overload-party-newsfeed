@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class JobFailedError(Exception):
-    """ソース取得・エントリのスキップ・記事処理のいずれかに 1 件以上失敗した場合に送出されます。"""
+    """ソース取得の失敗・本文が空のエントリ・記事処理の失敗が 1 件以上あった場合に送出されます。"""
 
 
 def run(
