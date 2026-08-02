@@ -1,10 +1,11 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
+from google.api_core.exceptions import ServiceUnavailable
 
 from newsfeed.model import SummarizeResult
-from newsfeed.summarizer import Summarizer
+from newsfeed.summarizer import SummarizeError, Summarizer
 
 
 def _mock_model(response_text: str) -> MagicMock:
@@ -47,28 +48,54 @@ class Test記事の要約:
 
     @patch("newsfeed.summarizer.vertexai.init")
     @patch("newsfeed.summarizer.GenerativeModel")
-    def test_空の要約はValueErrorになる(self, model_cls, init):
+    def test_空の要約は要約の失敗になる(self, model_cls, init):
         model_cls.return_value = _mock_model(
             json.dumps({"summary": "", "tags": []}),
         )
-        with pytest.raises(ValueError, match="invalid summary"):
+        with pytest.raises(SummarizeError, match="invalid summary"):
             Summarizer("proj", "us-central1").summarize("Title", "body")
 
     @patch("newsfeed.summarizer.vertexai.init")
     @patch("newsfeed.summarizer.GenerativeModel")
-    def test_リストでないtagsはValueErrorになる(self, model_cls, init):
+    def test_リストでないtagsは要約の失敗になる(self, model_cls, init):
         model_cls.return_value = _mock_model(
             json.dumps({"summary": "x", "tags": "not-a-list"}),
         )
-        with pytest.raises(ValueError, match="non-list tags"):
+        with pytest.raises(SummarizeError, match="non-list tags"):
             Summarizer("proj", "us-central1").summarize("Title", "body")
 
     @patch("newsfeed.summarizer.vertexai.init")
     @patch("newsfeed.summarizer.GenerativeModel")
-    def test_応答がJSONとして解釈できないときJSONDecodeErrorになる(self, model_cls, init):
+    def test_応答がJSONとして解釈できないとき要約の失敗になる(self, model_cls, init):
         model_cls.return_value = _mock_model("要約: これは JSON ではありません")
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(SummarizeError, match="non-JSON response"):
             Summarizer("proj", "us-central1").summarize("Title", "body")
+
+    @patch("newsfeed.summarizer.vertexai.init")
+    @patch("newsfeed.summarizer.GenerativeModel")
+    def test_要約の呼び出しが利用不可のとき要約の失敗になる(self, model_cls, init):
+        model = MagicMock()
+        model.generate_content.side_effect = ServiceUnavailable("backend is unavailable")
+        model_cls.return_value = model
+
+        with pytest.raises(SummarizeError) as excinfo:
+            Summarizer("proj", "us-central1").summarize("Title", "body")
+
+        assert "backend is unavailable" in str(excinfo.value)
+
+    @patch("newsfeed.summarizer.vertexai.init")
+    @patch("newsfeed.summarizer.GenerativeModel")
+    def test_応答に要約の候補が無いとき要約の失敗になる(self, model_cls, init):
+        response = MagicMock()
+        type(response).text = PropertyMock(side_effect=ValueError("no candidate was returned"))
+        model = MagicMock()
+        model.generate_content.return_value = response
+        model_cls.return_value = model
+
+        with pytest.raises(SummarizeError) as excinfo:
+            Summarizer("proj", "us-central1").summarize("Title", "body")
+
+        assert "no candidate was returned" in str(excinfo.value)
 
     @pytest.mark.parametrize(
         ("response", "match"),
@@ -76,25 +103,25 @@ class Test記事の要約:
             pytest.param(
                 {"tags": []},
                 "invalid summary",
-                id="summaryキーが欠落しているとき、ValueErrorになる",
+                id="summaryキーが欠落しているとき、要約の失敗になる",
             ),
             pytest.param(
                 {"summary": 123, "tags": []},
                 "invalid summary",
-                id="summaryが文字列でない数値123のとき、ValueErrorになる",
+                id="summaryが文字列でない数値123のとき、要約の失敗になる",
             ),
             pytest.param(
                 {"summary": "x"},
                 "non-list tags",
-                id="tagsキーが欠落しているとき、ValueErrorになる",
+                id="tagsキーが欠落しているとき、要約の失敗になる",
             ),
         ],
     )
-    def test_必須キーの欠落と型不正でValueErrorになる(self, response, match):
+    def test_必須キーの欠落と型不正で要約の失敗になる(self, response, match):
         with patch("newsfeed.summarizer.vertexai.init"), \
                 patch("newsfeed.summarizer.GenerativeModel") as model_cls:
             model_cls.return_value = _mock_model(json.dumps(response))
-            with pytest.raises(ValueError, match=match):
+            with pytest.raises(SummarizeError, match=match):
                 Summarizer("proj", "us-central1").summarize("Title", "body")
 
     @patch("newsfeed.summarizer.vertexai.init")

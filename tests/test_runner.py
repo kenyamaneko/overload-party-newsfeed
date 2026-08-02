@@ -4,7 +4,9 @@ import pytest
 
 from newsfeed.dedup import DedupStore
 from newsfeed.model import FetchedItem, FetchResult, MalformedEntry, SummarizeResult
+from newsfeed.publisher import PublishError
 from newsfeed.runner import JobFailedError, _fetch_and_publish
+from newsfeed.summarizer import SummarizeError
 
 
 def _item(n: int) -> FetchedItem:
@@ -96,7 +98,7 @@ class Test取得から配信までの処理:
         dedup = MagicMock()
         dedup.reserve.return_value = True
         summarizer = MagicMock()
-        summarizer.summarize.side_effect = RuntimeError("vertex down")
+        summarizer.summarize.side_effect = SummarizeError("vertex down")
         publisher = MagicMock()
 
         with pytest.raises(JobFailedError, match="1 article\\(s\\) failed to process"):
@@ -115,7 +117,7 @@ class Test取得から配信までの処理:
         dedup.reserve.return_value = True
         summarizer = _summarizer()
         publisher = MagicMock()
-        publisher.publish.side_effect = RuntimeError("pubsub down")
+        publisher.publish.side_effect = PublishError("pubsub down")
 
         with pytest.raises(JobFailedError, match="1 article\\(s\\) failed to process"):
             _fetch_and_publish(dedup, summarizer, publisher)
@@ -132,13 +134,53 @@ class Test取得から配信までの処理:
         dedup.reserve.return_value = True
         summarizer = _summarizer()
         publisher = MagicMock()
-        publisher.publish.side_effect = [RuntimeError("fail"), None, None]
+        publisher.publish.side_effect = [PublishError("fail"), None, None]
 
         with pytest.raises(JobFailedError, match="1 article\\(s\\) failed to process"):
             _fetch_and_publish(dedup, summarizer, publisher)
 
         # 1 件失敗後も残り 2 件の publish が試行される
         assert publisher.publish.call_count == 3
+
+    @patch("newsfeed.runner.fetch_all")
+    @patch("newsfeed.runner.ULID")
+    def test_1件目の要約が失敗したとき1件目は飛ばされ2件目がpublishされる(self, mock_ulid, mock_fetch_all):
+        mock_fetch_all.return_value = _fetched([_item(1), _item(2)])
+        mock_ulid.return_value = "01ABC"
+
+        dedup = MagicMock()
+        dedup.reserve.return_value = True
+        summarizer = MagicMock()
+        summarizer.summarize.side_effect = [
+            SummarizeError("vertex down"),
+            SummarizeResult(summary="要約", tags=[]),
+        ]
+        publisher = _RecordingPublisher()
+
+        with pytest.raises(JobFailedError, match="1 article\\(s\\) failed to process"):
+            _fetch_and_publish(dedup, summarizer, publisher)
+
+        assert [e.source_url for e in publisher.published_events] == ["https://example.com/2"]
+
+    @patch("newsfeed.runner.fetch_all")
+    @patch("newsfeed.runner.ULID")
+    def test_記事の処理で想定外の失敗が起きたとき残りの記事を処理せず呼び出し元へ送出する(
+        self, mock_ulid, mock_fetch_all,
+    ):
+        mock_fetch_all.return_value = _fetched([_item(1), _item(2)])
+        mock_ulid.return_value = "01ABC"
+
+        dedup = MagicMock()
+        dedup.reserve.return_value = True
+        summarizer = MagicMock()
+        summarizer.summarize.side_effect = AttributeError("summarizer is misconfigured")
+        publisher = _RecordingPublisher()
+
+        with pytest.raises(AttributeError, match="summarizer is misconfigured"):
+            _fetch_and_publish(dedup, summarizer, publisher)
+
+        assert publisher.published_events == []
+        dedup.release.assert_not_called()
 
     @patch("newsfeed.runner.fetch_all")
     @patch("newsfeed.runner.ULID")
@@ -289,7 +331,7 @@ class Test取得から配信までの処理:
         dedup.reserve.return_value = True
         summarizer = _summarizer()
         publisher = MagicMock()
-        publisher.publish.side_effect = RuntimeError("pubsub down")
+        publisher.publish.side_effect = PublishError("pubsub down")
 
         with pytest.raises(JobFailedError) as excinfo:
             _fetch_and_publish(dedup, summarizer, publisher)

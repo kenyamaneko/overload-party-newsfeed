@@ -8,6 +8,8 @@ import json
 import logging
 
 import vertexai
+from google.api_core.exceptions import GoogleAPIError
+from google.auth.exceptions import GoogleAuthError
 from vertexai.generative_models import GenerationConfig, GenerativeModel
 
 from newsfeed.model import SummarizeResult
@@ -15,8 +17,8 @@ from newsfeed.model import SummarizeResult
 logger = logging.getLogger(__name__)
 
 
-class SummarizeError(ValueError):
-    """要約結果が仕様の形式を満たさない場合に送出されます。"""
+class SummarizeError(Exception):
+    """要約の取得に失敗した場合に送出されます。"""
 
 
 _MODEL = "gemini-2.5-flash"
@@ -44,12 +46,29 @@ class Summarizer:
         self._model = GenerativeModel(_MODEL)
 
     def summarize(self, title: str, body: str) -> SummarizeResult:
+        """記事のタイトルと本文から日本語の要約とタグを得ます。
+
+        Args:
+            title: 記事のタイトル。
+            body: 記事の本文。
+
+        Returns:
+            日本語の要約と、許容語彙に絞ったタグ。
+
+        Raises:
+            SummarizeError: 要約を取得できなかったとき。
+        """
         prompt = _build_prompt(title, body)
-        response = self._model.generate_content(
-            prompt,
-            generation_config=GenerationConfig(response_mime_type="application/json"),
-        )
-        return _parse_response(response.text)
+        try:
+            response = self._model.generate_content(
+                prompt,
+                generation_config=GenerationConfig(response_mime_type="application/json"),
+            )
+            # 候補が返らなかったときは応答の読み出しで失敗するため、読み出しも変換の対象に含める
+            raw = response.text
+        except (GoogleAPIError, GoogleAuthError, ValueError) as e:
+            raise SummarizeError(f"summarizer: failed to generate content: {e}") from e
+        return _parse_response(raw)
 
 
 def _build_prompt(title: str, body: str) -> str:
@@ -69,7 +88,10 @@ def _build_prompt(title: str, body: str) -> str:
 
 
 def _parse_response(raw: str) -> SummarizeResult:
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise SummarizeError(f"summarizer returned non-JSON response: {raw!r}") from e
     summary = data.get("summary")
     raw_tags = data.get("tags")
 
