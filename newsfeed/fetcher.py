@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 
 import feedparser
 
-from newsfeed.model import FetchedItem
+from newsfeed.model import FetchedItem, FetchResult
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +20,10 @@ class FetchError(Exception):
 
 
 class MalformedEntryError(Exception):
-    """content タグが在るのに本文が空のエントリを検出した場合に送出されます。
+    """本文が空のエントリを検出した場合に送出されます。
 
-    title への黙フォールバックで本文を捏造せず、当該ソースの取得失敗として
-    表面化させます。
+    news 側は body が空文字列のイベントを不正として扱うため、title への
+    黙フォールバックで本文を捏造せず、当該ソースの取得失敗として表面化させます。
     """
 
 
@@ -43,11 +43,21 @@ DEFAULT_SOURCES: list[FeedSource] = [
 ]
 
 
-def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
-    """全ソースから RSS フィードを取得し FetchedItem のリストを返します。"""
+def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
+    """全ソースから RSS フィードを取得し、記事と失敗ソース名を返します。
+
+    Args:
+        sources: 取得対象の RSS フィードソース。
+
+    Returns:
+        取得できた記事と、取得に失敗したソースの名前。
+
+    Raises:
+        FetchError: 全ソースの取得に失敗したとき。
+    """
     items: list[FetchedItem] = []
     success_count = 0
-    failure_count = 0
+    failed_sources: list[str] = []
     for src in sources:
         try:
             feed = feedparser.parse(src.url)
@@ -70,32 +80,31 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> list[FetchedItem]:
         # 1 ソースの失敗を他ソースへ波及させないため、種別を問わず捕捉する
         except Exception as e:  # noqa: BLE001
             logger.error("fetcher: failed to parse feed %s (%s): %s", src.name, src.url, e)
-            failure_count += 1
+            failed_sources.append(src.name)
 
-    if success_count == 0 and failure_count > 0:
+    if success_count == 0 and failed_sources:
         raise FetchError(
-            f"all {failure_count} feed sources failed; no items fetched"
+            f"all {len(failed_sources)} feed sources failed; no items fetched"
         )
 
-    return items
+    return FetchResult(items=items, failed_sources=failed_sources)
 
 
 def extract_entry_body(entry, title: str) -> str:
     """RSS エントリから本文をプレーンテキストで取得する。
 
     content:encoded が在ればそれを本文とする。content タグが無いときに限り
-    description (summary) を本文とし、summary も空なら title で埋める
-    (news 側は body が空文字列のイベントを不正として扱うため)。
+    description (summary) を本文とする。
 
     Args:
         entry: feedparser が解釈した RSS/Atom エントリ。
-        title: content タグが無く summary も空のときに本文とするタイトル。
+        title: エラーメッセージで対象エントリを特定するためのタイトル。
 
     Returns:
         HTML を除去したプレーンテキストの本文。
 
     Raises:
-        MalformedEntryError: content タグが在るのに本文が空のとき。
+        MalformedEntryError: 本文が空のとき。
     """
     content_list = entry.get("content")
     if content_list:
@@ -108,7 +117,11 @@ def extract_entry_body(entry, title: str) -> str:
         return body
     summary = entry.get("summary", "")
     body = _html_to_plain_text(summary) if summary else ""
-    return body if body else title
+    if not body:
+        raise MalformedEntryError(
+            f"neither content nor summary carries a body: title={title!r}"
+        )
+    return body
 
 
 def _parse_date(entry) -> datetime | None:

@@ -47,24 +47,25 @@ reserve (SETNX)
 
 RSS の `content:encoded` は HTML 付き。news の管理 UI で `body` が編集対象テキストエリアに表示されるため、newsfeed 側で HTML を除去したプレーンテキストに正規化する (stdlib `html.parser`)。また、Vertex AI プロンプトの入力としても HTML より plain text の方が扱いが素直。
 
-## 障害ドメインを記事単位に閉じる
+## 障害ドメインをソース単位・記事単位に閉じる
 
-個別記事の失敗は**ジョブ全体を中断させない**が、**失敗 ≥ 1 件ならジョブ終了時 exit 1**。握りつぶしではなく「1 記事の失敗を他記事の処理に波及させない」という責務境界の話。
+個別ソース・個別記事の失敗は**ジョブ全体を中断させない**が、**失敗 ≥ 1 件ならジョブ終了時 exit 1**。握りつぶしではなく「1 件の失敗を他の処理に波及させない」という責務境界の話。
 
 | 障害 | 挙動 |
 |---|---|
 | 必須環境変数の未設定 | `load_config()` が例外 → exit 1 |
 | Secret Manager 取得失敗 | 例外 → exit 1 (本番のみ) |
 | Pub/Sub / Redis / Vertex AI クライアント初期化失敗 | exit 1 |
-| 全 RSS ソース取得失敗 (`FetchError`) | exit 1 |
-| 個別 RSS ソース取得失敗 | 構造化ログ、残りのソースで続行 |
+| 全 RSS ソース取得失敗 (`FetchError`) | 即 exit 1 (配信できる記事が 1 件も無いため) |
+| 個別 RSS ソース取得失敗 | 構造化ログ、残りのソースで続行、失敗ソース名を記録 |
+| 本文が空の記事 (`MalformedEntryError`) | title で本文を捏造せず、当該ソースの取得失敗として扱う |
 | 個別記事の Vertex AI or publish 失敗 | マーカー `DEL`、構造化ログ、次の記事へ続行、errors カウント |
-| ジョブ終了時 errors ≥ 1 | `PublishError` → exit 1 |
+| ジョブ終了時 失敗ソース ≥ 1 or errors ≥ 1 | `JobFailedError` → exit 1 |
 
 「即中断」ではなく「続行して最後に exit 1」を選ぶ理由:
 
 - Redis 層 + news 側 `ON CONFLICT` で冪等性が担保されているため、続行しても重複副作用は生まれない
-- 特定記事の恒常的失敗が他記事の publish を永久にブロックしないようにする
+- 特定ソース・特定記事の恒常的失敗が、他の publish を永久にブロックしないようにする
 - 監視は exit 1 + 構造化ログ (source / article_id / source_url / エラー詳細) で十分可視化できる
 
 ## Upstash Redis の運用

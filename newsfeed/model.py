@@ -18,6 +18,18 @@ class FetchedItem:
 
 
 @dataclass(frozen=True)
+class FetchResult:
+    """全 RSS ソースの取得結果。
+
+    取得できた記事の配信を止めずにソース取得の失敗をジョブの終了コードへ
+    伝えるため、記事と失敗ソース名を併せて返す。
+    """
+
+    items: list[FetchedItem]
+    failed_sources: list[str]
+
+
+@dataclass(frozen=True)
 class SummarizeResult:
     """Vertex AI の要約出力。"""
 
