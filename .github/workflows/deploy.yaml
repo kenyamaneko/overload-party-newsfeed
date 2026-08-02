@@ -52,17 +52,15 @@ jobs:
           password: ${{ steps.auth.outputs.access_token }}
 
       - name: Build and push
-        run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}
-          docker build -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest .
-          docker push ${IMAGE}:${{ github.sha }}
-          docker push ${IMAGE}:latest
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: .github/scripts/deploy/build-and-push-image.sh
 
       - name: Update Cloud Run Job
-        run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          gcloud run jobs update newsfeed-job \
-            --region ${{ env.REGION }} \
-            --project ${{ env.DEPLOY_PROJECT }} \
-            --image "${IMAGE}" \
-            --quiet
+        env:
+          JOB_NAME: newsfeed-job
+          IMAGE: ${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ github.sha }}
+          PROJECT: ${{ env.DEPLOY_PROJECT }}
+        run: .github/scripts/deploy/update-cloud-run-job.sh
