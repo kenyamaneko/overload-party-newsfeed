@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 
 import feedparser
 
-from newsfeed.model import FetchedItem, FetchResult
+from newsfeed.model import FetchedItem, FetchResult, MalformedEntry
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class MalformedEntryError(Exception):
     """本文が空のエントリを検出した場合に送出されます。
 
     news 側は body が空文字列のイベントを不正として扱うため、title への
-    黙フォールバックで本文を捏造せず、当該ソースの取得失敗として表面化させます。
+    黙フォールバックで本文を捏造せず、当該エントリの失敗として表面化させます。
     """
 
 
@@ -44,13 +44,13 @@ DEFAULT_SOURCES: list[FeedSource] = [
 
 
 def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
-    """全ソースから RSS フィードを取得し、記事と失敗ソース名を返します。
+    """全ソースから RSS フィードを取得し、記事と失敗を返します。
 
     Args:
         sources: 取得対象の RSS フィードソース。
 
     Returns:
-        取得できた記事と、取得に失敗したソースの名前。
+        取得できた記事と、取得に失敗したソースの名前、本文が空でスキップしたエントリ。
 
     Raises:
         FetchError: 全ソースの取得に失敗したとき。
@@ -58,6 +58,7 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
     items: list[FetchedItem] = []
     success_count = 0
     failed_sources: list[str] = []
+    malformed_entries: list[MalformedEntry] = []
     for src in sources:
         try:
             feed = feedparser.parse(src.url)
@@ -67,11 +68,22 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
                 title = entry.get("title", "")
                 if not source_url or not title:
                     continue
+                try:
+                    body = extract_entry_body(entry, title)
+                # 恒常的に壊れた 1 エントリが同ソースの後続記事を毎周期止めないため、
+                # ソースの失敗とせず当該エントリだけ飛ばす
+                except MalformedEntryError as e:
+                    logger.warning(
+                        "fetcher: skipped entry with empty body: source=%s title=%r: %s",
+                        src.name, title, e,
+                    )
+                    malformed_entries.append(MalformedEntry(source=src.name, title=title))
+                    continue
                 items.append(FetchedItem(
                     source=src.name,
                     source_url=source_url,
                     title=title,
-                    body=extract_entry_body(entry, title),
+                    body=body,
                     source_published_at=_parse_date(entry),
                 ))
                 count += 1
@@ -87,7 +99,11 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
             f"all {len(failed_sources)} feed sources failed; no items fetched"
         )
 
-    return FetchResult(items=items, failed_sources=failed_sources)
+    return FetchResult(
+        items=items,
+        failed_sources=failed_sources,
+        malformed_entries=malformed_entries,
+    )
 
 
 def extract_entry_body(entry, title: str) -> str:

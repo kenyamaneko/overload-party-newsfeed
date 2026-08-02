@@ -58,9 +58,11 @@ RSS の `content:encoded` は HTML 付き。news の管理 UI で `body` が編�
 | Pub/Sub / Redis / Vertex AI クライアント初期化失敗 | exit 1 |
 | 全 RSS ソース取得失敗 (`FetchError`) | 即 exit 1 (配信できる記事が 1 件も無いため) |
 | 個別 RSS ソース取得失敗 | 構造化ログ、残りのソースで続行、失敗ソース名を記録 |
-| 本文が空の記事 (`MalformedEntryError`) | title で本文を捏造せず、当該ソースの取得失敗として扱う |
+| 本文が空の記事 (`MalformedEntryError`) | title で本文を捏造せず当該エントリのみスキップ、構造化ログ、同ソースの後続記事へ続行、ソース名とタイトルを記録 |
 | 個別記事の Vertex AI or publish 失敗 | マーカー `DEL`、構造化ログ、次の記事へ続行、errors カウント |
-| ジョブ終了時 失敗ソース ≥ 1 or errors ≥ 1 | `JobFailedError` → exit 1 |
+| ジョブ終了時 失敗ソース ≥ 1 or スキップした記事 ≥ 1 or errors ≥ 1 | `JobFailedError` → exit 1 |
+
+ソース丸ごとの失敗とソース内の一部エントリの失敗は別の事象として記録する。前者は当該フィードの記事が 1 件も届かないのに対し、後者は同じフィードの他の記事が届くため、対処の緊急度が異なる。
 
 「即中断」ではなく「続行して最後に exit 1」を選ぶ理由:
 

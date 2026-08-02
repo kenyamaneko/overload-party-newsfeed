@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class JobFailedError(Exception):
-    """ソース取得または記事処理に 1 件以上失敗した場合に送出されます。"""
+    """ソース取得・エントリのスキップ・記事処理のいずれかに 1 件以上失敗した場合に送出されます。"""
 
 
 def run(
@@ -94,6 +94,11 @@ def _fetch_and_publish(
         failures.append(
             f"{len(fetched.failed_sources)} feed source(s) failed to fetch: "
             f"{', '.join(fetched.failed_sources)}"
+        )
+    if fetched.malformed_entries:
+        skipped = ", ".join(f"{e.source}:{e.title}" for e in fetched.malformed_entries)
+        failures.append(
+            f"{len(fetched.malformed_entries)} entry(ies) skipped for empty body: {skipped}"
         )
     if errors > 0:
         failures.append(f"{errors} article(s) failed to process")

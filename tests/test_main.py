@@ -2,12 +2,29 @@ import os
 from functools import partial
 from unittest.mock import MagicMock, patch
 
+import feedparser
 import pytest
 
 import main
 from newsfeed.config import Config
+from newsfeed.fetcher import FeedSource
 from newsfeed.model import FetchedItem, FetchResult, SummarizeResult
 from newsfeed.runner import run
+
+_RSS_EMPTY_BODY_THEN_VALID = """<?xml version="1.0"?>
+<rss version="2.0">
+<channel><title>T</title>
+<item>
+  <title>Broken Article</title>
+  <link>http://example.com/broken</link>
+  <description></description>
+</item>
+<item>
+  <title>Good Article</title>
+  <link>http://example.com/good</link>
+  <description>&lt;p&gt;good body&lt;/p&gt;</description>
+</item>
+</channel></rss>"""
 
 
 def _fakes(publisher) -> dict:
@@ -66,6 +83,7 @@ class Testエントリポイントの実行:
                 body="body1",
             )],
             failed_sources=["azure"],
+            malformed_entries=[],
         )
         with patch("newsfeed.runner.fetch_all", return_value=fetched), \
                 patch("main.run", partial(run, **_fakes(publisher))), \
@@ -77,4 +95,26 @@ class Testエントリポイントの実行:
         assert publisher.publish.call_args[0][0].source_url == "https://example.com/1"
         out = capsys.readouterr().out
         assert "CRITICAL" in out
-        assert "azure" in out
+        assert "1 feed source(s) failed to fetch: azure" in out
+
+    def test_本文が空の記事があっても同じソースの後続記事を配信し終了コード1で終了する(
+        self, capsys, preserve_root_logger,
+    ):
+        publisher = MagicMock()
+        feed = feedparser.parse(_RSS_EMPTY_BODY_THEN_VALID)
+        with patch("newsfeed.fetcher.feedparser.parse", return_value=feed), \
+                patch("newsfeed.runner.DEFAULT_SOURCES",
+                      [FeedSource("aws", "http://aws.example.com/feed")]), \
+                patch("main.run", partial(run, **_fakes(publisher))), \
+                patch.dict(os.environ, {"APP_ENV": "local"}, clear=True), \
+                pytest.raises(SystemExit) as excinfo:
+            main.main()
+
+        assert excinfo.value.code == 1
+        assert publisher.publish.call_count == 1
+        event = publisher.publish.call_args[0][0]
+        assert event.title == "Good Article"
+        assert event.body == "good body"
+        out = capsys.readouterr().out
+        assert "CRITICAL" in out
+        assert "1 entry(ies) skipped for empty body: aws:Broken Article" in out
