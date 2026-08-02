@@ -18,6 +18,28 @@ class FetchedItem:
 
 
 @dataclass(frozen=True)
+class MalformedEntry:
+    """本文が空のためスキップした RSS エントリ。"""
+
+    source: str
+    title: str
+
+
+@dataclass(frozen=True)
+class FetchResult:
+    """全 RSS ソースの取得結果。
+
+    取得できた記事の配信を止めずに失敗をジョブの終了コードへ伝えるため、
+    記事と併せて失敗を返す。ソース丸ごとの失敗 (failed_sources) と
+    ソース内の一部エントリの失敗 (malformed_entries) は別の事象として扱う。
+    """
+
+    items: list[FetchedItem]
+    failed_sources: list[str]
+    malformed_entries: list[MalformedEntry]
+
+
+@dataclass(frozen=True)
 class SummarizeResult:
     """Vertex AI の要約出力。"""
 

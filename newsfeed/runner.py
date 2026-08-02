@@ -5,8 +5,8 @@
   2. 予約成功分のみ Vertex AI 要約 + publish
   3. Vertex AI / publish が失敗したら DEL でマーカーを解放し次周期に再試行
 
-障害ドメインは記事単位で閉じる (1 件の失敗が他記事を止めない) が、
-失敗が 1 件でもあれば PublishError でジョブを exit 1 として可視化する。
+障害ドメインはソース単位・記事単位で閉じる (1 件の失敗が他を止めない) が、
+失敗が 1 件でもあれば JobFailedError でジョブを exit 1 として可視化する。
 """
 import logging
 
@@ -22,8 +22,8 @@ from newsfeed.summarizer import Summarizer
 logger = logging.getLogger(__name__)
 
 
-class PublishError(Exception):
-    """1 件以上の記事処理 (要約 or publish) に失敗した場合に送出されます。"""
+class JobFailedError(Exception):
+    """ソース取得の失敗・本文が空のエントリ・記事処理の失敗が 1 件以上あった場合に送出されます。"""
 
 
 def run(
@@ -51,12 +51,12 @@ def _fetch_and_publish(
     publisher: ArticlePublisher,
 ) -> None:
     logger.info("step 1: fetching RSS feeds")
-    items = fetch_all(DEFAULT_SOURCES)
-    logger.info("step 1: fetched %d items total", len(items))
+    fetched = fetch_all(DEFAULT_SOURCES)
+    logger.info("step 1: fetched %d items total", len(fetched.items))
 
     published = duplicates = errors = 0
 
-    for item in items:
+    for item in fetched.items:
         if not dedup.reserve(item.source_url):
             duplicates += 1
             logger.info("already seen, skipping: source_url=%s", item.source_url)
@@ -89,8 +89,21 @@ def _fetch_and_publish(
         published, duplicates, errors,
     )
 
+    failures: list[str] = []
+    if fetched.failed_sources:
+        failures.append(
+            f"{len(fetched.failed_sources)} feed source(s) failed to fetch: "
+            f"{', '.join(fetched.failed_sources)}"
+        )
+    if fetched.malformed_entries:
+        skipped = ", ".join(f"{e.source}:{e.title}" for e in fetched.malformed_entries)
+        failures.append(
+            f"{len(fetched.malformed_entries)} entry(ies) skipped for empty body: {skipped}"
+        )
     if errors > 0:
-        raise PublishError(f"{errors} article(s) failed to process")
+        failures.append(f"{errors} article(s) failed to process")
+    if failures:
+        raise JobFailedError("; ".join(failures))
 
 
 def convert_to_event(article_id: str, item: FetchedItem, summary: SummarizeResult) -> ArticleEvent:
