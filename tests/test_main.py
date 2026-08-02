@@ -11,6 +11,18 @@ from newsfeed.fetcher import FeedSource
 from newsfeed.model import FetchedItem, FetchResult, SummarizeResult
 from newsfeed.runner import run
 
+_RSS_ONE_ARTICLE = """<?xml version="1.0"?>
+<rss version="2.0">
+<channel><title>T</title>
+<item>
+  <title>Good Article</title>
+  <link>http://example.com/good</link>
+  <description>&lt;p&gt;good body&lt;/p&gt;</description>
+</item>
+</channel></rss>"""
+
+_ERROR_PAGE_HTML = "<!DOCTYPE html><html><body><h1>Service Unavailable</h1></body></html>"
+
 _RSS_EMPTY_BODY_THEN_VALID = """<?xml version="1.0"?>
 <rss version="2.0">
 <channel><title>T</title>
@@ -96,6 +108,48 @@ class Testエントリポイントの実行:
         out = capsys.readouterr().out
         assert "CRITICAL" in out
         assert "1 feed source(s) failed to fetch: azure" in out
+
+    def test_RSSソースがエラー応答を返すとき他ソースを配信した上で終了コード1で終了する(
+        self, capsys, preserve_root_logger, feed_server,
+    ):
+        dead_url = feed_server.serve_feed(
+            "/dead", _ERROR_PAGE_HTML, status=503, content_type="text/html",
+        )
+        good_url = feed_server.serve_feed("/good", _RSS_ONE_ARTICLE)
+        publisher = MagicMock()
+        with patch("newsfeed.runner.DEFAULT_SOURCES",
+                   [FeedSource("azure", dead_url), FeedSource("aws", good_url)]), \
+                patch("main.run", partial(run, **_fakes(publisher))), \
+                patch.dict(os.environ, {"APP_ENV": "local"}, clear=True), \
+                pytest.raises(SystemExit) as excinfo:
+            main.main()
+
+        assert excinfo.value.code == 1
+        assert publisher.publish.call_count == 1
+        assert publisher.publish.call_args[0][0].title == "Good Article"
+        out = capsys.readouterr().out
+        assert "CRITICAL" in out
+        assert "1 feed source(s) failed to fetch: azure" in out
+
+    def test_全RSSソースがエラー応答を返すとき何も配信せず終了コード1で終了する(
+        self, capsys, preserve_root_logger, feed_server,
+    ):
+        dead_url = feed_server.serve_feed(
+            "/dead", _ERROR_PAGE_HTML, status=503, content_type="text/html",
+        )
+        publisher = MagicMock()
+        with patch("newsfeed.runner.DEFAULT_SOURCES",
+                   [FeedSource("azure", dead_url), FeedSource("aws", dead_url)]), \
+                patch("main.run", partial(run, **_fakes(publisher))), \
+                patch.dict(os.environ, {"APP_ENV": "local"}, clear=True), \
+                pytest.raises(SystemExit) as excinfo:
+            main.main()
+
+        assert excinfo.value.code == 1
+        publisher.publish.assert_not_called()
+        out = capsys.readouterr().out
+        assert "CRITICAL" in out
+        assert "all 2 feed sources failed" in out
 
     def test_本文が空の記事があっても同じソースの後続記事を配信し終了コード1で終了する(
         self, capsys, preserve_root_logger,

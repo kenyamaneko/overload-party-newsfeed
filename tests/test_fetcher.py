@@ -1,9 +1,10 @@
 import time
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import feedparser
 import pytest
+from feedparser.util import FeedParserDict
 
 from newsfeed.fetcher import (
     FeedSource,
@@ -199,80 +200,45 @@ def _entry(url: str, title: str) -> dict:
     return {"link": url, "title": title, "content": [{"value": "<p>body</p>"}]}
 
 
-class Test全フィードソースの取得:
-    def _make_feed(self, entries):
-        feed = MagicMock()
-        feed.entries = entries
-        return feed
+def _parsed_feed(entries: list[dict]) -> FeedParserDict:
+    """正常に取得できたフィードと同じ形の解釈結果を組み立てる。
 
+    Args:
+        entries: フィードに含めるエントリ。
+
+    Returns:
+        feedparser.parse の戻り値と同じ形の解釈結果。
+    """
+    return FeedParserDict(bozo=False, status=200, entries=entries)
+
+
+class Test全フィードソースの取得:
     @patch("newsfeed.fetcher.feedparser.parse")
     def test_source_urlが無いentryはスキップする(self, mock_parse):
-        mock_parse.return_value = self._make_feed([{"title": "No URL entry"}])
+        mock_parse.return_value = _parsed_feed([{"title": "No URL entry"}])
         result = fetch_all([FeedSource("src1", "http://example.com/feed")])
         assert result.items == []
 
     @patch("newsfeed.fetcher.feedparser.parse")
     def test_titleが空のentryはスキップする(self, mock_parse):
-        mock_parse.return_value = self._make_feed([
+        mock_parse.return_value = _parsed_feed([
             {"link": "http://example.com/1", "title": ""},
         ])
         result = fetch_all([FeedSource("src1", "http://example.com/feed")])
         assert result.items == []
 
     @patch("newsfeed.fetcher.feedparser.parse")
-    def test_全ソースが失敗するとFetchErrorになる(self, mock_parse):
-        mock_parse.side_effect = Exception("network error")
-        sources = [
-            FeedSource("bad1", "http://bad1.example.com/feed"),
-            FeedSource("bad2", "http://bad2.example.com/feed"),
-        ]
-        with pytest.raises(FetchError, match="all 2 feed sources failed"):
-            fetch_all(sources)
-
-    @patch("newsfeed.fetcher.feedparser.parse")
-    def test_一部のソースが失敗しても成功したソースの記事を返す(self, mock_parse):
-        valid_entry = {
+    def test_記事の公開日時をUTCで取り込む(self, mock_parse):
+        mock_parse.return_value = _parsed_feed([{
             "link": "http://example.com/good",
             "title": "Good Article",
             "content": [{"value": "<p>body</p>"}],
             "published_parsed": time.struct_time((2025, 1, 1, 0, 0, 0, 0, 1, 0)),
-        }
-        mock_parse.side_effect = [
-            Exception("network error"),
-            self._make_feed([valid_entry]),
-        ]
-        sources = [
-            FeedSource("bad", "http://bad.example.com/feed"),
-            FeedSource("good", "http://good.example.com/feed"),
-        ]
-        result = fetch_all(sources)
-        assert len(result.items) == 1
-        assert result.items[0].source == "good"
-        assert result.items[0].title == "Good Article"
-        assert result.items[0].body == "body"
-
-    @patch("newsfeed.fetcher.feedparser.parse")
-    def test_一部のソースが失敗したとき失敗したソースの名前を返す(self, mock_parse):
-        mock_parse.side_effect = [
-            Exception("network error"),
-            self._make_feed([_entry("http://example.com/good", "Good Article")]),
-            Exception("network error"),
-        ]
-        sources = [
-            FeedSource("aws", "http://aws.example.com/feed"),
-            FeedSource("azure", "http://azure.example.com/feed"),
-            FeedSource("oci", "http://oci.example.com/feed"),
-        ]
-        result = fetch_all(sources)
-        assert result.failed_sources == ["aws", "oci"]
-
-    @patch("newsfeed.fetcher.feedparser.parse")
-    def test_全ソースが成功したとき失敗したソースは0件になる(self, mock_parse):
-        mock_parse.return_value = self._make_feed([
-            _entry("http://example.com/good", "Good Article"),
-        ])
+        }])
         result = fetch_all([FeedSource("aws", "http://aws.example.com/feed")])
-        assert result.failed_sources == []
+        assert [item.source_published_at for item in result.items] == [
+            datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ]
 
     @pytest.mark.parametrize("entry, expected_urls", [
         pytest.param(_entry("http://example.com/link", "T"),
@@ -291,19 +257,12 @@ class Test全フィードソースの取得:
     ])
     def test_source_urlはlinkを優先しidにフォールバックする(self, entry, expected_urls):
         with patch("newsfeed.fetcher.feedparser.parse") as mock_parse:
-            mock_parse.return_value = self._make_feed([entry])
+            mock_parse.return_value = _parsed_feed([entry])
             result = fetch_all([FeedSource("src1", "http://example.com/feed")])
         assert [item.source_url for item in result.items] == expected_urls
 
     def test_ソース0件はFetchErrorを出さず記事も失敗ソースも0件で返る(self):
         result = fetch_all([])
-        assert result.items == []
-        assert result.failed_sources == []
-
-    def test_entries0件のフィードは取得失敗にせず記事0件で返る(self):
-        with patch("newsfeed.fetcher.feedparser.parse") as mock_parse:
-            mock_parse.return_value = self._make_feed([])
-            result = fetch_all([FeedSource("src1", "http://example.com/feed")])
         assert result.items == []
         assert result.failed_sources == []
 
@@ -314,7 +273,7 @@ class Test全フィードソースの取得:
             _entry("http://example.com/2", "Article 2"),
         ]
         with patch("newsfeed.fetcher.feedparser.parse") as mock_parse:
-            mock_parse.return_value = self._make_feed(entries)
+            mock_parse.return_value = _parsed_feed(entries)
             result = fetch_all([FeedSource("src1", "http://example.com/feed")])
         assert [item.source_url for item in result.items] == [
             "http://example.com/0",
@@ -344,7 +303,7 @@ class Test全フィードソースの取得:
 
     def test_全記事の本文が揃っているとき記録される不正な記事は0件になる(self):
         with patch("newsfeed.fetcher.feedparser.parse") as mock_parse:
-            mock_parse.return_value = self._make_feed([
+            mock_parse.return_value = _parsed_feed([
                 _entry("http://example.com/good", "Good Article"),
             ])
             result = fetch_all([FeedSource("aws", "http://aws.example.com/feed")])
@@ -369,3 +328,111 @@ class Test全フィードソースの取得:
         assert [item.source for item in result.items] == ["good"]
         assert [item.body for item in result.items] == ["full body"]
         assert result.failed_sources == []
+
+
+_RSS_ONE_ARTICLE = """<?xml version="1.0"?>
+<rss version="2.0">
+<channel><title>Feed</title>
+<item>
+  <title>Good Article</title>
+  <link>http://example.com/good</link>
+  <description>&lt;p&gt;good body&lt;/p&gt;</description>
+</item>
+</channel></rss>"""
+
+_RSS_NO_ARTICLE = """<?xml version="1.0"?>
+<rss version="2.0">
+<channel><title>Feed</title></channel></rss>"""
+
+_RSS_CUT_OFF_MIDWAY = """<?xml version="1.0"?>
+<rss version="2.0">
+<channel><title>Feed</title>
+<item>
+  <title>Good Article</title>
+  <link>http://example.com/good</link>
+  <description>&lt;p&gt;good body&lt;/p&gt;</description>
+</item>"""
+
+_ERROR_PAGE_HTML = "<!DOCTYPE html><html><body><h1>Not Found</h1></body></html>"
+
+# 特権ポートはテスト実行ユーザが listen できないため、接続は必ず拒否される
+_UNREACHABLE_URL = "http://127.0.0.1:1/feed"
+
+
+class Testソース取得の成否判定:
+    @pytest.mark.parametrize("status, content_type, body", [
+        pytest.param(500, "text/html", _ERROR_PAGE_HTML,
+                     id="HTTP 500 でエラーページが返るとき、取得失敗になる"),
+        pytest.param(404, "text/html", _ERROR_PAGE_HTML,
+                     id="HTTP 404 でエラーページが返るとき、取得失敗になる"),
+        pytest.param(200, "text/html", _ERROR_PAGE_HTML,
+                     id="HTTP 200 で RSS ではない HTML が返るとき、取得失敗になる"),
+        pytest.param(500, "application/rss+xml", _RSS_ONE_ARTICLE,
+                     id="HTTP 500 の本文が RSS として読めるとき、取得失敗になる"),
+    ])
+    def test_フィードを受け取れなかったソースは取得失敗として記録される(
+        self, feed_server, status, content_type, body,
+    ):
+        dead_url = feed_server.serve_feed("/dead", body, status=status, content_type=content_type)
+        good_url = feed_server.serve_feed("/good", _RSS_ONE_ARTICLE)
+
+        result = fetch_all([FeedSource("dead", dead_url), FeedSource("good", good_url)])
+
+        assert result.failed_sources == ["dead"]
+        assert [item.source for item in result.items] == ["good"]
+
+    def test_接続できないソースは取得失敗として記録される(self, feed_server):
+        good_url = feed_server.serve_feed("/good", _RSS_ONE_ARTICLE)
+
+        result = fetch_all([
+            FeedSource("down", _UNREACHABLE_URL),
+            FeedSource("good", good_url),
+        ])
+
+        assert result.failed_sources == ["down"]
+        assert [item.source for item in result.items] == ["good"]
+
+    def test_正しいRSSを返すソースは取得失敗にならない(self, feed_server):
+        url = feed_server.serve_feed("/feed", _RSS_ONE_ARTICLE)
+
+        result = fetch_all([FeedSource("aws", url)])
+
+        assert result.failed_sources == []
+        assert [item.title for item in result.items] == ["Good Article"]
+        assert [item.body for item in result.items] == ["good body"]
+
+    def test_リダイレクトの先で正しいRSSを返すソースは取得失敗にならない(self, feed_server):
+        target_url = feed_server.serve_feed("/moved-here", _RSS_ONE_ARTICLE)
+        url = feed_server.serve_redirect("/feed", target_url)
+
+        result = fetch_all([FeedSource("oci", url)])
+
+        assert result.failed_sources == []
+        assert [item.title for item in result.items] == ["Good Article"]
+
+    def test_記事が0件の正しいRSSを返すソースは取得失敗にならない(self, feed_server):
+        url = feed_server.serve_feed("/feed", _RSS_NO_ARTICLE)
+
+        result = fetch_all([FeedSource("aws", url)])
+
+        assert result.failed_sources == []
+        assert result.items == []
+
+    def test_XMLが途中で切れていても記事を読めるソースは取得失敗にならない(self, feed_server):
+        url = feed_server.serve_feed("/feed", _RSS_CUT_OFF_MIDWAY)
+
+        result = fetch_all([FeedSource("aws", url)])
+
+        assert result.failed_sources == []
+        assert [item.title for item in result.items] == ["Good Article"]
+
+    def test_全ソースがフィードを受け取れないときFetchErrorになる(self, feed_server):
+        first_url = feed_server.serve_feed(
+            "/first", _ERROR_PAGE_HTML, status=500, content_type="text/html",
+        )
+        second_url = feed_server.serve_feed(
+            "/second", _ERROR_PAGE_HTML, status=404, content_type="text/html",
+        )
+
+        with pytest.raises(FetchError, match="all 2 feed sources failed"):
+            fetch_all([FeedSource("aws", first_url), FeedSource("azure", second_url)])

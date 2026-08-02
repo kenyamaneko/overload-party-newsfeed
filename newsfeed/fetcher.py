@@ -42,6 +42,25 @@ DEFAULT_SOURCES: list[FeedSource] = [
     FeedSource("oci", "https://blogs.oracle.com/cloud-infrastructure/rss"),
 ]
 
+_HTTP_ERROR_STATUS_MIN = 400
+
+
+def _find_fetch_failure(feed) -> str | None:
+    """フィードの取得結果から取得失敗の理由を探す。
+
+    Args:
+        feed: feedparser が返した取得結果。
+
+    Returns:
+        取得失敗の理由。取得できていれば None。
+    """
+    status = getattr(feed, "status", None)
+    if status is not None and status >= _HTTP_ERROR_STATUS_MIN:
+        return f"HTTP status {status}"
+    if feed.bozo and not feed.entries:
+        return f"response is not a readable feed: {feed.bozo_exception}"
+    return None
+
 
 def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
     """全ソースから RSS フィードを取得し、記事と失敗を返します。
@@ -62,6 +81,18 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
     for src in sources:
         try:
             feed = feedparser.parse(src.url)
+            failure = _find_fetch_failure(feed)
+            if failure is not None:
+                logger.error(
+                    "fetcher: failed to fetch feed %s (%s): %s", src.name, src.url, failure,
+                )
+                failed_sources.append(src.name)
+                continue
+            if feed.bozo:
+                logger.warning(
+                    "fetcher: %s: feed is malformed but %d entries were readable: %s",
+                    src.name, len(feed.entries), feed.bozo_exception,
+                )
             count = 0
             for entry in feed.entries:
                 source_url = entry.get("link") or entry.get("id") or ""
@@ -91,7 +122,9 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
             success_count += 1
         # 1 ソースの失敗を他ソースへ波及させないため、種別を問わず捕捉する
         except Exception as e:  # noqa: BLE001
-            logger.error("fetcher: failed to parse feed %s (%s): %s", src.name, src.url, e)
+            logger.error(
+                "fetcher: failed to read feed %s (%s): %s", src.name, src.url, e,
+            )
             failed_sources.append(src.name)
 
     if success_count == 0 and failed_sources:
