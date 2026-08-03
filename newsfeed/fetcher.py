@@ -164,8 +164,8 @@ def fetch_all(sources: list[FeedSource] = DEFAULT_SOURCES) -> FetchResult:
 def extract_entry_body(entry, title: str) -> str:
     """RSS エントリから本文をプレーンテキストで取得する。
 
-    content:encoded が在ればそれを本文とする。content タグが無いときに限り
-    description (summary) を本文とする。
+    content:encoded が本文を持つならそれを本文とする。content が本文を持たない
+    (タグが無い・中身が空) ときは description (summary) を本文とする。
 
     Args:
         entry: feedparser が解釈した RSS/Atom エントリ。
@@ -178,16 +178,11 @@ def extract_entry_body(entry, title: str) -> str:
         MalformedEntryError: 本文が空のとき。
     """
     content_list = entry.get("content")
-    if content_list:
-        html = content_list[0].get("value", "")
-        body = _html_to_plain_text(html) if html else ""
-        if not body:
-            raise MalformedEntryError(
-                f"content tag present but body is empty: title={title!r}"
-            )
+    content_html = content_list[0].get("value", "") if content_list else ""
+    body = _html_to_plain_text(content_html)
+    if body:
         return body
-    summary = entry.get("summary", "")
-    body = _html_to_plain_text(summary) if summary else ""
+    body = _html_to_plain_text(entry.get("summary", ""))
     if not body:
         raise MalformedEntryError(
             f"neither content nor summary carries a body: title={title!r}"
