@@ -1,6 +1,5 @@
 """記事イベントの Pub/Sub publisher。"""
 import json
-import logging
 
 from google.api_core.exceptions import GoogleAPIError
 from google.auth.exceptions import GoogleAuthError
@@ -8,8 +7,6 @@ from google.cloud import pubsub_v1
 from google.cloud.pubsub_v1.publisher.exceptions import MessageTooLargeError
 
 from newsfeed.model import ArticleEvent
-
-logger = logging.getLogger(__name__)
 
 
 class PublishError(Exception):

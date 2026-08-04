@@ -1,11 +1,16 @@
 """テスト全体で共有する pytest フィクスチャ。"""
 import logging
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 import redis
+from testcontainers.community.google import PubSubContainer
 from testcontainers.redis import RedisContainer
+
+_EMULATOR_IMAGE = "gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators"
+_TOPIC_NAME = "test-article-collected"
 
 
 @pytest.fixture
@@ -115,6 +120,37 @@ def feed_server():
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.fixture(scope="session")
+def pubsub_emulator():
+    """テストセッション全体で共有する Pub/Sub emulator container。
+
+    Yields:
+        PubSubContainer: 起動済みの emulator container。
+    """
+    with PubSubContainer(image=_EMULATOR_IMAGE) as emulator:
+        yield emulator
+
+
+@pytest.fixture
+def pubsub_topic(pubsub_emulator):
+    """テストごとに独立した project 上に topic と subscription を用意する。
+
+    Yields:
+        tuple[str, str, str]: (project_id, topic 名, subscription_path)。
+    """
+    project_id = f"test-{uuid.uuid4().hex}"
+    publisher_client = pubsub_emulator.get_publisher_client()
+    subscriber_client = pubsub_emulator.get_subscriber_client()
+    topic_path = publisher_client.topic_path(project_id, _TOPIC_NAME)
+    publisher_client.create_topic(name=topic_path)
+    subscription_path = subscriber_client.subscription_path(project_id, "test-sub")
+    subscriber_client.create_subscription(name=subscription_path, topic=topic_path)
+
+    yield project_id, _TOPIC_NAME, subscription_path
+
+    subscriber_client.close()
 
 
 @pytest.fixture

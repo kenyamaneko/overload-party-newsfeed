@@ -18,7 +18,7 @@ class DedupStore(Protocol):
             source_url: 予約する記事の URL。
 
         Returns:
-            新規なら True、予約済みなら False。
+            新規なら True、既存なら False。
         """
         ...
 

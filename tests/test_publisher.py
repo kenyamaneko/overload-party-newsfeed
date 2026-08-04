@@ -4,12 +4,11 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from testcontainers.community.google import PubSubContainer
 
 from newsfeed.model import ArticleEvent
 from newsfeed.publisher import ArticlePublisher, PublishError
 
-_TOPIC_NAME = "test-article-collected"
+_TOPIC_NAME = "test-topic"
 
 
 def _event(**overrides) -> ArticleEvent:
@@ -26,44 +25,13 @@ def _event(**overrides) -> ArticleEvent:
     return ArticleEvent(**defaults)
 
 
-@pytest.fixture(scope="session")
-def pubsub_emulator():
-    """テストセッション全体で共有する Pub/Sub emulator container。
-
-    Yields:
-        PubSubContainer: 起動済みの emulator container。
-    """
-    with PubSubContainer(image="gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators") as emulator:
-        yield emulator
-
-
-@pytest.fixture
-def topic_subscription(pubsub_emulator):
-    """テストごとに独立した project 上に topic と subscription を用意する。
-
-    Yields:
-        tuple[str, str]: (project_id, subscription_path)。
-    """
-    project_id = f"test-{uuid.uuid4().hex}"
-    publisher_client = pubsub_emulator.get_publisher_client()
-    subscriber_client = pubsub_emulator.get_subscriber_client()
-    topic_path = publisher_client.topic_path(project_id, _TOPIC_NAME)
-    publisher_client.create_topic(name=topic_path)
-    subscription_path = subscriber_client.subscription_path(project_id, "test-sub")
-    subscriber_client.create_subscription(name=subscription_path, topic=topic_path)
-
-    yield project_id, subscription_path
-
-    subscriber_client.close()
-
-
 class TestArticlePublisherによる配信:
-    def test_publishしたイベントが設定されたトピックに実配信される(self, pubsub_emulator, topic_subscription):
-        project_id, subscription_path = topic_subscription
+    def test_publishしたイベントが設定されたトピックに実配信される(self, pubsub_emulator, pubsub_topic):
+        project_id, topic, subscription_path = pubsub_topic
         publisher_client = pubsub_emulator.get_publisher_client()
         subscriber_client = pubsub_emulator.get_subscriber_client()
 
-        publisher = ArticlePublisher(project_id, _TOPIC_NAME, client=publisher_client)
+        publisher = ArticlePublisher(project_id, topic, client=publisher_client)
         publisher.publish(_event(source_url="https://example.com/delivered"))
 
         response = subscriber_client.pull(
