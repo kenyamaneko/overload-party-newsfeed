@@ -5,7 +5,6 @@
 正常扱いする。
 """
 import json
-import logging
 
 import vertexai
 from google.api_core.exceptions import GoogleAPIError
@@ -13,8 +12,6 @@ from google.auth.exceptions import GoogleAuthError
 from vertexai.generative_models import GenerationConfig, GenerativeModel
 
 from newsfeed.model import SummarizeResult
-
-logger = logging.getLogger(__name__)
 
 
 class SummarizeError(Exception):

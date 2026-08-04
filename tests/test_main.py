@@ -9,6 +9,7 @@ import main
 from newsfeed.config import Config
 from newsfeed.fetcher import FeedSource
 from newsfeed.model import FetchedItem, FetchResult, SummarizeResult
+from newsfeed.publisher import PublishError
 from newsfeed.runner import run
 
 _RSS_ONE_ARTICLE = """<?xml version="1.0"?>
@@ -151,6 +152,30 @@ class Testエントリポイントの実行:
         out = capsys.readouterr().out
         assert "CRITICAL" in out
         assert "all 2 feed sources failed" in out
+
+    def test_記事のpublishが失敗したときログに例外の型が完全修飾名で出る(
+        self, capsys, preserve_root_logger,
+    ):
+        publisher = MagicMock()
+        publisher.publish.side_effect = PublishError("pubsub down")
+        fetched = FetchResult(
+            items=[FetchedItem(
+                source="aws",
+                source_url="https://example.com/1",
+                title="Article 1",
+                body="body1",
+            )],
+            failed_sources=[],
+            malformed_entries=[],
+        )
+        with patch("newsfeed.runner.fetch_all", return_value=fetched), \
+                patch("main.run", partial(run, **_fakes(publisher))), \
+                patch.dict(os.environ, {"APP_ENV": "local"}, clear=True), \
+                pytest.raises(SystemExit):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "error_type=newsfeed.publisher.PublishError" in out
 
     def test_本文が空の記事があっても同じソースの後続記事を配信し終了コード1で終了する(
         self, capsys, preserve_root_logger,
