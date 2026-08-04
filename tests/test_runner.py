@@ -1,3 +1,5 @@
+import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -5,7 +7,7 @@ import pytest
 from newsfeed.dedup import DedupStore
 from newsfeed.model import FetchedItem, FetchResult, MalformedEntry, SummarizeResult
 from newsfeed.publisher import PublishError
-from newsfeed.runner import JobFailedError, _fetch_and_publish
+from newsfeed.runner import JobFailedError, _fetch_and_publish, run
 from newsfeed.summarizer import SummarizeError
 
 
@@ -55,6 +57,42 @@ class _RecordingPublisher:
 @pytest.fixture
 def dedup_store(redis_client) -> DedupStore:
     return DedupStore(redis_client)
+
+
+class Test配信先トピックの決定:
+    @patch("newsfeed.runner.fetch_all")
+    @patch("newsfeed.runner.ULID")
+    def test_環境変数に設定したトピックの購読で記事を受け取れる(
+        self, mock_ulid, mock_fetch_all, pubsub_emulator, pubsub_topic,
+    ):
+        project_id, topic, subscription_path = pubsub_topic
+        mock_fetch_all.return_value = _fetched([_item(1)])
+        mock_ulid.return_value = "01ABC"
+
+        dedup = MagicMock()
+        dedup.reserve.return_value = True
+
+        env = {
+            "APP_ENV": "local",
+            "GOOGLE_CLOUD_PROJECT": project_id,
+            "VERTEX_LOCATION": "us-central1",
+            "NEWS_ARTICLE_COLLECTED_TOPIC": topic,
+            "UPSTASH_REDIS_URL": "redis://localhost:6379/0",
+            "PUBSUB_EMULATOR_HOST": pubsub_emulator.get_pubsub_emulator_host(),
+        }
+        with patch.dict(os.environ, env, clear=True):
+            run(dedup=dedup, summarizer=_summarizer())
+
+        subscriber_client = pubsub_emulator.get_subscriber_client()
+        response = subscriber_client.pull(
+            request={"subscription": subscription_path, "max_messages": 1},
+            timeout=10,
+        )
+        subscriber_client.close()
+
+        assert len(response.received_messages) == 1
+        decoded = json.loads(response.received_messages[0].message.data.decode("utf-8"))
+        assert decoded["source_url"] == "https://example.com/1"
 
 
 class Test取得から配信までの処理:

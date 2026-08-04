@@ -12,6 +12,7 @@ import logging
 
 from ulid import ULID
 
+from newsfeed import port
 from newsfeed.config import Config, load_config
 from newsfeed.dedup import DedupStore, create_client_from_url
 from newsfeed.fetcher import DEFAULT_SOURCES, fetch_all
@@ -28,9 +29,9 @@ class JobFailedError(Exception):
 
 def run(
     cfg: Config | None = None,
-    dedup: DedupStore | None = None,
-    summarizer: Summarizer | None = None,
-    publisher: ArticlePublisher | None = None,
+    dedup: port.DedupStore | None = None,
+    summarizer: port.Summarizer | None = None,
+    publisher: port.ArticlePublisher | None = None,
 ) -> None:
     """パイプライン全体を実行します。テスト時は各依存を DI できます。"""
     if cfg is None:
@@ -40,15 +41,18 @@ def run(
     if summarizer is None:
         summarizer = Summarizer(cfg.google_cloud_project, cfg.vertex_location)
     if publisher is None:
-        publisher = ArticlePublisher(cfg.google_cloud_project)
+        publisher = ArticlePublisher(
+            cfg.google_cloud_project,
+            cfg.news_article_collected_topic,
+        )
 
     _fetch_and_publish(dedup, summarizer, publisher)
 
 
 def _fetch_and_publish(
-    dedup: DedupStore,
-    summarizer: Summarizer,
-    publisher: ArticlePublisher,
+    dedup: port.DedupStore,
+    summarizer: port.Summarizer,
+    publisher: port.ArticlePublisher,
 ) -> None:
     logger.info("step 1: fetching RSS feeds")
     fetched = fetch_all(DEFAULT_SOURCES)

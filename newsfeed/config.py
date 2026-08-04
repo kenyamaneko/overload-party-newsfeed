@@ -7,6 +7,9 @@ APP_ENV は 'local' / 'production' の 2 値のみ (matchmaking と同じ)。
 dev / stg / prod の区別は GOOGLE_CLOUD_PROJECT (別プロジェクト) で吸収し、
 APP_ENV では「Secret Manager を経由するかどうか」だけを切り替える
 (ADR-020 §Secret Manager)。
+
+Pub/Sub トピック名は実行基盤から env で受け取る。取り違えた宛先へ黙って
+publish させないため、既定値へ倒さず未設定を起動時の失敗として扱う。
 """
 import os
 from dataclasses import dataclass
@@ -29,6 +32,7 @@ class Config:
     google_cloud_project: str
     redis_url: str
     vertex_location: str
+    news_article_collected_topic: str
 
 
 def load_config() -> Config:
@@ -39,6 +43,10 @@ def load_config() -> Config:
     vertex_location = os.environ.get("VERTEX_LOCATION")
     if not vertex_location:
         raise ValueError("missing required env var: VERTEX_LOCATION")
+
+    topic = os.environ.get("NEWS_ARTICLE_COLLECTED_TOPIC")
+    if not topic:
+        raise ValueError("missing required env var: NEWS_ARTICLE_COLLECTED_TOPIC")
 
     app_env = os.environ.get("APP_ENV")
     if app_env not in _VALID_APP_ENVS:
@@ -52,6 +60,7 @@ def load_config() -> Config:
         google_cloud_project=project,
         redis_url=redis_url,
         vertex_location=vertex_location,
+        news_article_collected_topic=topic,
     )
 
 
