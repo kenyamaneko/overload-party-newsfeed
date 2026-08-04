@@ -1,6 +1,9 @@
 # newsfeed のローカル開発スタック。構成と使い方は README「ローカル開発」を参照。
 name: overload-party-newsfeed
 
+# publish 先と作成先が食い違うと publish が失敗するため、topic 名は 1 箇所で定義して両者へ渡す。
+x-news-article-collected-topic: &news_article_collected_topic news-article-collected
+
 services:
   # サービス名は env 変数 (UPSTASH_REDIS_URL) との整合のため redis のままにしているが、
   # 実体は Valkey (BSD-3, Redis 7.2 系フォーク)。RESP/Lua は Redis と 100% 互換。
@@ -33,8 +36,7 @@ services:
     environment:
       PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
       PUBSUB_PROJECT_ID: overload-party-local
-      # topic 名の SSoT はアプリ側 (newsfeed/publisher.py の TOPIC_NAME)。合わせて設定する。
-      NEWS_ARTICLE_COLLECTED_TOPIC: news-article-collected
+      NEWS_ARTICLE_COLLECTED_TOPIC: *news_article_collected_topic
     volumes:
       - ./docker/pubsub/init-topics.sh:/init-topics.sh:ro
     entrypoint: ["/bin/bash", "/init-topics.sh"]
@@ -52,6 +54,7 @@ services:
       APP_ENV: local
       GOOGLE_CLOUD_PROJECT: overload-party-local
       VERTEX_LOCATION: us-central1
+      NEWS_ARTICLE_COLLECTED_TOPIC: *news_article_collected_topic
       UPSTASH_REDIS_URL: redis://redis:6379/0
       PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
     volumes:

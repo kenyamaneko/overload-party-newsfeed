@@ -9,10 +9,7 @@ from testcontainers.community.google import PubSubContainer
 from newsfeed.model import ArticleEvent
 from newsfeed.publisher import ArticlePublisher, PublishError
 
-# production の TOPIC_NAME を import せず独立リテラルで持つ。トピック名が
-# production 側で変わった場合、下記の emulator テストは publish 先の
-# トピックが存在しなくなり NotFound で失敗する (トートロジーの解消)。
-_TOPIC_NAME = "news-article-collected"
+_TOPIC_NAME = "test-article-collected"
 
 
 def _event(**overrides) -> ArticleEvent:
@@ -44,9 +41,6 @@ def pubsub_emulator():
 def topic_subscription(pubsub_emulator):
     """テストごとに独立した project 上に topic と subscription を用意する。
 
-    project 単位で分離するため、production と同じ TOPIC_NAME を使っても
-    テスト間でメッセージが混ざらない。
-
     Yields:
         tuple[str, str]: (project_id, subscription_path)。
     """
@@ -69,7 +63,7 @@ class TestArticlePublisherによる配信:
         publisher_client = pubsub_emulator.get_publisher_client()
         subscriber_client = pubsub_emulator.get_subscriber_client()
 
-        publisher = ArticlePublisher(project_id, client=publisher_client)
+        publisher = ArticlePublisher(project_id, _TOPIC_NAME, client=publisher_client)
         publisher.publish(_event(source_url="https://example.com/delivered"))
 
         response = subscriber_client.pull(
@@ -85,7 +79,7 @@ class TestArticlePublisherによる配信:
         client = MagicMock()
         client.publish.return_value.result.return_value = "msg-id"
 
-        publisher = ArticlePublisher("my-project", client=client)
+        publisher = ArticlePublisher("my-project", _TOPIC_NAME, client=client)
         publisher.publish(_event(
             article_id="01ABC",
             source="aws",
@@ -116,7 +110,7 @@ class TestArticlePublisherによる配信:
         client = MagicMock()
         client.publish.return_value.result.return_value = "msg-id"
 
-        publisher = ArticlePublisher("my-project", client=client)
+        publisher = ArticlePublisher("my-project", _TOPIC_NAME, client=client)
         publisher.publish(_event(title="日本語タイトル"))
 
         decoded = json.loads(client.publish.call_args[0][1].decode("utf-8"))
@@ -126,7 +120,7 @@ class TestArticlePublisherによる配信:
         client = MagicMock()
         client.publish.return_value.result.return_value = "msg-id"
 
-        publisher = ArticlePublisher("my-project", client=client)
+        publisher = ArticlePublisher("my-project", _TOPIC_NAME, client=client)
         publisher.publish(_event(source_published_at=None))
 
         decoded = json.loads(client.publish.call_args[0][1].decode("utf-8"))
@@ -135,7 +129,9 @@ class TestArticlePublisherによる配信:
     def test_存在しないトピックへ配信すると配信の失敗になる(self, pubsub_emulator):
         publisher_client = pubsub_emulator.get_publisher_client()
 
-        publisher = ArticlePublisher(f"test-{uuid.uuid4().hex}", client=publisher_client)
+        publisher = ArticlePublisher(
+            f"test-{uuid.uuid4().hex}", _TOPIC_NAME, client=publisher_client,
+        )
         with pytest.raises(PublishError) as excinfo:
             publisher.publish(_event(article_id="01XYZ"))
 
@@ -146,7 +142,7 @@ class TestArticlePublisherによる配信:
         client = MagicMock()
         client.publish.return_value.result.return_value = "msg-id"
 
-        publisher = ArticlePublisher("my-project", client=client)
+        publisher = ArticlePublisher("my-project", _TOPIC_NAME, client=client)
         publisher.publish(_event(lang="en"))
 
         decoded = json.loads(client.publish.call_args[0][1].decode("utf-8"))

@@ -1,9 +1,4 @@
-"""news-article-collected トピックへの Pub/Sub publisher。
-
-トピック名は news リポ (packages/api-news/news.go) の TopicArticleCollected
-と一致させる必要があるが、newsfeed は Go パッケージを consume できないため
-本ファイル内で契約定数としてハードコードする (ADR-020 §パッケージ境界を継承)。
-"""
+"""記事イベントの Pub/Sub publisher。"""
 import json
 import logging
 
@@ -16,19 +11,29 @@ from newsfeed.model import ArticleEvent
 
 logger = logging.getLogger(__name__)
 
-TOPIC_NAME = "news-article-collected"
-
 
 class PublishError(Exception):
     """イベントの publish に失敗した場合に送出されます。"""
 
 
 class ArticlePublisher:
-    """ArticleEvent を news-article-collected トピックへ publish します。"""
+    """ArticleEvent を指定されたトピックへ publish します。"""
 
-    def __init__(self, project_id: str, client: pubsub_v1.PublisherClient | None = None) -> None:
+    def __init__(
+        self,
+        project_id: str,
+        topic: str,
+        client: pubsub_v1.PublisherClient | None = None,
+    ) -> None:
+        """publish 先を決めて publisher を用意します。
+
+        Args:
+            project_id: publish 先トピックを持つプロジェクト。
+            topic: publish 先トピックの名前。
+            client: publish に使うクライアント。省略時は既定の資格情報で作成する。
+        """
         self._client = client or pubsub_v1.PublisherClient()
-        self._topic_path = self._client.topic_path(project_id, TOPIC_NAME)
+        self._topic_path = self._client.topic_path(project_id, topic)
 
     def publish(self, event: ArticleEvent) -> None:
         """1 件のイベントを publish し、サーバ側 ACK を待機します。

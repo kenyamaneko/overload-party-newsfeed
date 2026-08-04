@@ -95,3 +95,5 @@ matchmaking ([ADR-010](../../overload-party-common/docs/adr/010-matchmaking-queu
 ## イベント契約
 
 publish する `news-article-collected` ペイロードは news リポの `packages/api-news/ArticleCollectedEvent` と一致させる。型パッケージが受信側 (news) に置かれている経緯は ADR-019 §パッケージ境界 を継承（ADR-020 でも同じ方針）。
+
+publish 先のトピック名は実行基盤 (Cloud Run Job の環境変数、ローカルは compose) から受け取る。トピックを作る側と publish する側で名前の供給元を一本化し、コードの再ビルドなしに両者を揃えられるようにしている。newsfeed 側は与えられた名前へ publish するだけで、News の受信トピックと一致させる責務は供給元にある。

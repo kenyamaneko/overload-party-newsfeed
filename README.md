@@ -28,10 +28,11 @@ Cloud Scheduler (2 時間おき)
 | `APP_ENV` | はい | `local` / `production` の 2 値のみ。`production` のとき Upstash 接続情報を Secret Manager から取得する (dev/stg/prod の区別は `GOOGLE_CLOUD_PROJECT` で吸収) |
 | `GOOGLE_CLOUD_PROJECT` | はい | Pub/Sub / Vertex AI / Secret Manager の対象プロジェクト |
 | `VERTEX_LOCATION` | はい | Vertex AI リージョン (例: `us-central1`) |
+| `NEWS_ARTICLE_COLLECTED_TOPIC` | はい | 記事イベントの publish 先トピック名。News 側の受信トピックと同じ `news-article-collected` を設定する |
 | `UPSTASH_REDIS_URL` | `APP_ENV=local` 時のみ | ローカル Valkey の接続 URL (例: `redis://localhost:6379/0`) |
 | `PUBSUB_EMULATOR_HOST` | `APP_ENV=local` 時のみ | ローカル Pub/Sub emulator のホスト (例: `localhost:8085`) |
 
-必須変数が未設定なら起動時に即 fail する。トピック名は `news-article-collected` に固定（契約定数として実装側でハードコード）。
+必須変数が未設定なら起動時に即 fail する。
 
 ## Secret Manager（本番）
 

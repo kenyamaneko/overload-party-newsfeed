@@ -57,6 +57,7 @@ def _fakes(publisher) -> dict:
             google_cloud_project="test-project",
             redis_url="redis://localhost:6379",
             vertex_location="us-central1",
+            news_article_collected_topic="test-topic",
         ),
         "dedup": dedup,
         "summarizer": summarizer,
