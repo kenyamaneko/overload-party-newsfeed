@@ -79,7 +79,9 @@ def _fetch_and_publish(
             logger.error(
                 "processing failed: source=%s article_id=%s source_url=%s "
                 "error_type=%s error=%s",
-                item.source, article_id, item.source_url, type(e).__name__, e,
+                item.source, article_id, item.source_url,
+                # 型名だけではどのモジュールの例外か判別できないため、モジュール名まで含めて一意に示す
+                f"{type(e).__module__}.{type(e).__qualname__}", e,
             )
             continue
 
