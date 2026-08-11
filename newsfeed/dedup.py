@@ -7,7 +7,7 @@ SET ... NX EX で check+mark をアトミックに行い、TTL 期間内の同�
 import redis
 
 _KEY_PREFIX = "newsfeed:seen:"
-_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 日 (ADR-020)
+_TTL_SECONDS = 30 * 24 * 60 * 60  # クラッシュで解放処理が走らなくても予約が残り続けないため TTL を設ける
 
 
 class DedupStore:

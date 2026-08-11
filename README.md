@@ -2,7 +2,7 @@
 
 クラウドニュース収集 Cloud Run Job。AWS / Azure / Google Cloud の公式 RSS を定期取得し、Upstash Redis で同一 URL の再処理を抑止したうえで、Vertex AI Gemini で日本語要約・タグ付けして `news-article-collected` Pub/Sub トピックへ publish する。
 
-詳細は [サービス設計書](docs/ARCHITECTURE.md) を参照。
+設計判断 (Why) は [common の ADR](https://github.com/kenyamaneko/overload-party-common/tree/main/docs/adr) に記録する。
 
 [テスト観点カタログ](https://kenyamaneko.github.io/overload-party-newsfeed/): テスト名から生成した、テスト済みの観点の一覧。
 
@@ -43,7 +43,7 @@ Cloud Scheduler (2 時間おき)
 | `newsfeed-upstash-redis-endpoint` | `host:port` 形式の Upstash エンドポイント |
 | `newsfeed-upstash-redis-password` | Upstash `default` ユーザーのパスワード |
 
-newsfeed Cloud Run Job のサービスアカウントに `roles/secretmanager.secretAccessor` / `roles/aiplatform.user` / `roles/pubsub.publisher` を付与する (ADR-020)。
+newsfeed Cloud Run Job のサービスアカウントに `roles/secretmanager.secretAccessor` / `roles/aiplatform.user` / `roles/pubsub.publisher` を付与する。
 
 Upstash DB 名は環境ごとに別インスタンス: `overload-party-{dev,stg,prod}-newsfeed`。
 

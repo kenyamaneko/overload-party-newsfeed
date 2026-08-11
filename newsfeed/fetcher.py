@@ -79,6 +79,7 @@ def _find_fetch_failure(feed) -> str | None:
         取得失敗の理由。取得できていれば None。
     """
     status = getattr(feed, "status", None)
+    # リダイレクト先が正しいフィードでも status には元の 3xx が残るため、4xx 以上のみ失敗とする
     if status is not None and status >= _HTTP_ERROR_STATUS_MIN:
         return f"HTTP status {status}"
     if feed.bozo and not feed.entries:
@@ -232,7 +233,11 @@ class _PlainTextExtractor(HTMLParser):
 
 
 def _html_to_plain_text(html: str) -> str:
-    """HTML タグを除去し段落区切りを保ったプレーンテキストを返す。"""
+    """HTML タグを除去し段落区切りを保ったプレーンテキストを返す。
+
+    news の管理 UI で body が編集対象のテキストエリアに表示されるため、
+    プレーンテキストへ変換する。
+    """
     extractor = _PlainTextExtractor()
     extractor.feed(html)
     lines = [line.strip() for line in extractor.build_text().splitlines()]
