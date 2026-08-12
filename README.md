@@ -1,13 +1,12 @@
 # overload-party-newsfeed
 
-カードゲーム Overload Party のクラウドニュース収集を担う Cloud Run Job。AWS / Azure / Google Cloud の公式 RSS を定期取得し、Vertex AI Gemini で日本語要約・タグ付けして配信する。
+カードゲーム Overload Party のクラウドニュース収集を担うジョブ。
 
 ## 技術スタック
 
 | レイヤー | 技術 |
 |---|---|
 | 言語 | Python |
-| 実行基盤 | Cloud Scheduler, Cloud Run Job |
 | データストア | Upstash Redis |
 | AI要約 | Vertex AI Gemini |
 | シークレット管理 | Secret Manager |
