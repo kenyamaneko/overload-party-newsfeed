@@ -1,69 +1,22 @@
 # overload-party-newsfeed
 
-クラウドニュース収集 Cloud Run Job。AWS / Azure / Google Cloud の公式 RSS を定期取得し、Upstash Redis で同一 URL の再処理を抑止したうえで、Vertex AI Gemini で日本語要約・タグ付けして `news-article-collected` Pub/Sub トピックへ publish する。
+カードゲーム Overload Party のクラウドニュース収集を担うジョブ。
 
-設計判断 (Why) は [common の ADR](https://github.com/kenyamaneko/overload-party-common/tree/main/docs/adr) に記録する。
+## 技術スタック
 
-[テスト観点カタログ](https://kenyamaneko.github.io/overload-party-newsfeed/): テスト名から生成した、テスト済みの観点の一覧。
-
-## サービス間連携
-
-```
-Cloud Scheduler (2 時間おき)
-  └─ Newsfeed (Cloud Run Job)
-       ├─ RSS (AWS / Azure / Google Cloud)
-       ├─ Upstash Redis (source_url dedup, TTL 30d)
-       ├─ Vertex AI Gemini 2.5 Flash (日本語要約 + タグ付け)
-       └─ Pub/Sub publish
-            └─ news-article-collected → News (overload-party-news)
-```
-
-- REST エンドポイントなし（バッチジョブ）
-- 記事の永続化・校閲・配信は News サービスの責務 (ADR-020)
-
-## 環境変数
-
-| 変数名 | 必須 | 説明 |
-|---|---|---|
-| `APP_ENV` | はい | `local` / `production` の 2 値のみ。`production` のとき Upstash 接続情報を Secret Manager から取得する (dev/stg/prod の区別は `GOOGLE_CLOUD_PROJECT` で吸収) |
-| `GOOGLE_CLOUD_PROJECT` | はい | Pub/Sub / Vertex AI / Secret Manager の対象プロジェクト |
-| `VERTEX_LOCATION` | はい | Vertex AI リージョン (例: `us-central1`) |
-| `NEWS_ARTICLE_COLLECTED_TOPIC` | はい | 記事イベントの publish 先トピック名。News 側の受信トピックと同じ `news-article-collected` を設定する |
-| `UPSTASH_REDIS_URL` | `APP_ENV=local` 時のみ | ローカル Valkey の接続 URL (例: `redis://localhost:6379/0`) |
-| `PUBSUB_EMULATOR_HOST` | `APP_ENV=local` 時のみ | ローカル Pub/Sub emulator のホスト (例: `localhost:8085`) |
-
-必須変数が未設定なら起動時に即 fail する。
-
-## Secret Manager（本番）
-
-本番環境では Upstash Redis 接続情報を以下のシークレットから取得する（`APP_ENV=production` のとき）:
-
-| Secret ID | 内容 |
+| レイヤー | 技術 |
 |---|---|
-| `newsfeed-upstash-redis-endpoint` | `host:port` 形式の Upstash エンドポイント |
-| `newsfeed-upstash-redis-password` | Upstash `default` ユーザーのパスワード |
+| 言語 | Python |
+| データストア | Upstash Redis |
+| AI要約 | Vertex AI Gemini |
+| シークレット管理 | Secret Manager |
+| 非同期通信 | Cloud Pub/Sub |
 
-newsfeed Cloud Run Job のサービスアカウントに `roles/secretmanager.secretAccessor` / `roles/aiplatform.user` / `roles/pubsub.publisher` を付与する。
+## ドキュメント
 
-Upstash DB 名は環境ごとに別インスタンス: `overload-party-{dev,stg,prod}-newsfeed`。
-
-## ローカル開発
-
-`make run` はジョブ本体とインフラ (Valkey / Pub/Sub emulator) を compose 内で起動する。
-インフラはホストへ publish せず内部ネットワークのサービス名 DNS で参照するため、他リポの
-ローカルスタックやホスト上の他アプリとポートが衝突しない。newsfeed は API ポートを持たない
-バッチのため、ホストへ publish するポートは無い。
-
-```bash
-make run   # ジョブ + インフラを compose で起動 (バッチを 1 周して終了)
-make down  # 停止して volume を削除
-make test  # pytest 実行 (Testcontainers が Valkey を起動; Docker 必須)
-make lint  # ruff
-```
-
-ソース (`main.py` / `newsfeed/`) は bind-mount しているため、編集して再度 `make run` すれば
-イメージを作り直さずに反映される (依存を変えたときだけ `--build` が再ビルドする)。
-ローカルでは Secret Manager を経由せず compose の env を直読みする。
-
-要約 (Vertex AI) にはエミュレータが無く実 API を呼ぶため、ジョブを最後まで完走させるには
-Google Cloud の認証情報が必要になる。認証なしでは要約ステップで失敗して終了する。
+| ドキュメント | 内容 |
+|---|---|
+| [セットアップ](docs/SETUP.md) | 環境変数・Secret Manager・ローカル開発 |
+| [ADR](https://github.com/kenyamaneko/overload-party-common/tree/main/docs/adr)（commonリポジトリ） | 設計判断の背景・理由・結果 |
+| [システム構成図](https://github.com/kenyamaneko/overload-party-common#システム構成図)（commonリポジトリ） | Overload Party 全体の構成図 |
+| [テスト観点カタログ](https://kenyamaneko.github.io/overload-party-newsfeed/) | テスト名から自動生成した、テスト済みの観点一覧 |
