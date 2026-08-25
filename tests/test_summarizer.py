@@ -7,7 +7,7 @@ from google.api_core.exceptions import GoogleAPIError
 from newsfeed.summarizer import SummarizeError, Summarizer
 
 
-def _summarizer_with_response(text: str = None, side_effect: Exception = None) -> Summarizer:
+def _summarizer_with_response(text: str | None = None, side_effect: Exception | None = None) -> Summarizer:
     """モデル呼び出しを代用に差し替えた Summarizer を組み立てる。
 
     Args:

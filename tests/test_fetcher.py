@@ -3,7 +3,13 @@ from datetime import datetime, timezone
 import feedparser
 import pytest
 
-from newsfeed.fetcher import FeedSource, FetchError, MalformedEntryError, extract_entry_body, fetch_all
+from newsfeed.fetcher import (
+    FeedSource,
+    FetchError,
+    MalformedEntryError,
+    extract_entry_body,
+    fetch_all,
+)
 from newsfeed.model import MalformedEntry
 
 _ERROR_PAGE_HTML = "<!DOCTYPE html><html><body><h1>Service Unavailable</h1></body></html>"
