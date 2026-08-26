@@ -52,21 +52,19 @@ class Test要約とタグの生成:
         assert result.summary == "クラウドの新機能について"
         assert result.tags == ["compute", "network"]
 
-    def test_モデルが返したタグに許容タグ以外が含まれるときそのタグは結果から除外される(self):
-        summarizer = _summarizer_with_response(
-            text=json.dumps({"summary": "要約", "tags": ["compute", "not-an-allowed-tag"]}),
-        )
+    @pytest.mark.parametrize(
+        "model_tags, expected_tags",
+        [
+            pytest.param(["compute", "not-an-allowed-tag"], ["compute"], id="許容タグ以外が含まれるとき"),
+            pytest.param([], [], id="タグの配列が空のとき"),
+        ],
+    )
+    def test_モデルが返したタグは許容タグのみに絞り込まれる(self, model_tags, expected_tags):
+        summarizer = _summarizer_with_response(text=json.dumps({"summary": "要約", "tags": model_tags}))
 
         result = summarizer.summarize("title", "body")
 
-        assert result.tags == ["compute"]
-
-    def test_モデルが返したタグの配列が空のとき結果のタグも空になる(self):
-        summarizer = _summarizer_with_response(text=json.dumps({"summary": "要約", "tags": []}))
-
-        result = summarizer.summarize("title", "body")
-
-        assert result.tags == []
+        assert result.tags == expected_tags
 
 
 class Test本文の長さ:

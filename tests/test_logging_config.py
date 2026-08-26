@@ -12,10 +12,12 @@ class Test本番環境のログ出力:
         configure_logging(APP_ENV_PRODUCTION)
         logging.getLogger("newsfeed.test").info("hello")
 
-        decoded = json.loads(capsys.readouterr().out.strip())
+        out = capsys.readouterr().out
+        decoded = json.loads(out.strip())
         assert decoded["severity"] == "INFO"
         assert "hello" in decoded["message"]
         assert decoded["logger"] == "newsfeed.test"
+        assert out.strip().count("\n") == 0
 
     def test_例外情報付きのログのときmessageにスタックトレースが連結される(self, capsys, preserve_root_logger):
         configure_logging(APP_ENV_PRODUCTION)
@@ -35,8 +37,7 @@ class Testlocal環境のログ出力:
         logging.getLogger("newsfeed.test").info("hello")
 
         out = capsys.readouterr().out
-        assert "INFO" in out
-        assert "hello" in out
+        assert "INFO newsfeed.test hello" in out
 
 
 class Test不正なAPP_ENVの検証:

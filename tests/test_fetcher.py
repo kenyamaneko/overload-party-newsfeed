@@ -113,7 +113,7 @@ class Testソース単位の取得:
         assert result.failed_sources == ["azure"]
         assert [item.source_url for item in result.items] == ["http://example.com/good"]
 
-    def test_全てのソースが取得に失敗したとき取得は例外で失敗し記事は1件も返らない(self, feed_server):
+    def test_全てのソースが取得に失敗したとき取得は例外で失敗する(self, feed_server):
         dead_url_1 = feed_server.serve_feed("/dead1", _ERROR_PAGE_HTML, status=503, content_type="text/html")
         dead_url_2 = feed_server.serve_feed("/dead2", _ERROR_PAGE_HTML, status=500, content_type="text/html")
 
@@ -134,11 +134,24 @@ class Testソース単位の取得:
 
 
 class Testエントリの選別:
-    def test_リンクもIDも無いエントリは記事一覧にも本文欠落の記録にも含まれない(self, feed_server):
+    @pytest.mark.parametrize(
+        "malformed_item_xml",
+        [
+            pytest.param(
+                "<item><title>No Link No Id</title><description>body</description></item>",
+                id="リンクもIDも無いとき",
+            ),
+            pytest.param(
+                "<item><link>http://example.com/notitle</link><description>body</description></item>",
+                id="タイトルが無いとき",
+            ),
+        ],
+    )
+    def test_必須項目が欠けたエントリは記事一覧にも本文欠落の記録にも含まれない(self, feed_server, malformed_item_xml):
         url = feed_server.serve_feed(
             "/mixed",
             _rss(
-                "<item><title>No Link No Id</title><description>body</description></item>"
+                malformed_item_xml +
                 "<item><title>Normal Article</title><link>http://example.com/normal</link>"
                 "<description>body</description></item>",
             ),
@@ -163,21 +176,6 @@ class Testエントリの選別:
 
         assert len(result.items) == 1
         assert result.items[0].source_url == "urn:uuid:fixed-guid-1"
-
-    def test_タイトルが無いエントリは記事一覧にも本文欠落の記録にも含まれない(self, feed_server):
-        url = feed_server.serve_feed(
-            "/notitle",
-            _rss(
-                "<item><link>http://example.com/notitle</link><description>body</description></item>"
-                "<item><title>Normal Article</title><link>http://example.com/normal</link>"
-                "<description>body</description></item>",
-            ),
-        )
-
-        result = fetch_all([FeedSource("aws", url)])
-
-        assert [item.title for item in result.items] == ["Normal Article"]
-        assert result.malformed_entries == []
 
     def test_本文が空のエントリは本文欠落として記録され記事一覧には含まれない(self, feed_server):
         url = feed_server.serve_feed(
@@ -291,8 +289,7 @@ class Test本文抽出:
 
         result = extract_entry_body(entry, "T")
 
-        lines = [line.strip() for line in result.splitlines() if line.strip()]
-        assert lines == ["Heading", "Paragraph one", "Item A", "Item B"]
+        assert result == "Heading\nParagraph one\nItem A\nItem B"
 
     def test_本文の前後に余分な空白は残らない(self):
         entry = self._entry(

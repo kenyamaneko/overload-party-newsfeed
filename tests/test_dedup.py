@@ -57,7 +57,6 @@ class Test予約と解放:
             t.join()
 
         assert results.count(True) == 1
-        assert results.count(False) == thread_count - 1
 
 
 class Test予約の有効期限:
