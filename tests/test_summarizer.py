@@ -7,15 +7,15 @@ from google.api_core.exceptions import GoogleAPIError
 from newsfeed.summarizer import SummarizeError, Summarizer
 
 
-def _summarizer_with_response(text: str | None = None, side_effect: Exception | None = None) -> Summarizer:
-    """モデル呼び出しを代用に差し替えた Summarizer を組み立てる。
+def _build_summarizer_with_mock_model(text: str | None = None, side_effect: Exception | None = None) -> tuple[Summarizer, MagicMock]:
+    """モデル呼び出しを代用に差し替えた Summarizer と、その代用モデル自体を組み立てる。
 
     Args:
-        text: generate_content が返す応答テキスト。side_effect 指定時は無視される。
-        side_effect: generate_content 呼び出し自体を失敗させる例外。
+        text: モデルが返す応答テキスト。side_effect 指定時は無視される。
+        side_effect: モデルの呼び出し自体を失敗させる例外。
 
     Returns:
-        vertexai.init / GenerativeModel を差し替え済みの Summarizer。
+        モデル呼び出しを差し替え済みの Summarizer と、差し替えた代用モデル。
     """
     mock_model = MagicMock()
     if side_effect is not None:
@@ -24,7 +24,21 @@ def _summarizer_with_response(text: str | None = None, side_effect: Exception | 
         mock_model.generate_content.return_value = MagicMock(text=text)
     with patch("newsfeed.summarizer.vertexai.init"), \
             patch("newsfeed.summarizer.GenerativeModel", return_value=mock_model):
-        return Summarizer("test-project", "us-central1")
+        return Summarizer("test-project", "us-central1"), mock_model
+
+
+def _summarizer_with_response(text: str | None = None, side_effect: Exception | None = None) -> Summarizer:
+    """モデル呼び出しを代用に差し替えた Summarizer を組み立てる。
+
+    Args:
+        text: モデルが返す応答テキスト。side_effect 指定時は無視される。
+        side_effect: モデルの呼び出し自体を失敗させる例外。
+
+    Returns:
+        モデル呼び出しを差し替え済みの Summarizer。
+    """
+    summarizer, _ = _build_summarizer_with_mock_model(text=text, side_effect=side_effect)
+    return summarizer
 
 
 class Test要約とタグの生成:
@@ -53,6 +67,27 @@ class Test要約とタグの生成:
         result = summarizer.summarize("title", "body")
 
         assert result.tags == []
+
+
+class Test本文の長さ:
+    def test_本文の長さがちょうど4000文字のときモデルへの依頼内容にはその本文全体がそのまま含まれる(self):
+        body = "a" * 4000
+        summarizer, mock_model = _build_summarizer_with_mock_model(text=json.dumps({"summary": "要約", "tags": []}))
+
+        summarizer.summarize("title", body)
+
+        prompt = mock_model.generate_content.call_args[0][0]
+        assert body in prompt
+
+    def test_本文の長さが4000文字を超えるときモデルへの依頼内容に含まれる本文は先頭4000文字までに切り詰められそれ以降は含まれない(self):
+        body = "a" * 4000 + "excess-tail"
+        summarizer, mock_model = _build_summarizer_with_mock_model(text=json.dumps({"summary": "要約", "tags": []}))
+
+        summarizer.summarize("title", body)
+
+        prompt = mock_model.generate_content.call_args[0][0]
+        assert body[:4000] in prompt
+        assert "excess-tail" not in prompt
 
 
 class Test要約の失敗:
