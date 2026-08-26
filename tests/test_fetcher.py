@@ -282,7 +282,19 @@ class Test本文抽出:
         with pytest.raises(MalformedEntryError):
             extract_entry_body(entry, "T")
 
-    def test_段落見出しリストなど区切りとなる要素の境界で改行され前後の余分な空白は残らない(self):
+    def test_段落見出しリストなど区切りとなる要素の境界で改行される(self):
+        entry = self._entry(
+            "<item><title>T</title><link>http://example.com/1</link>"
+            "<content:encoded><![CDATA[<h1>Heading</h1><p>Paragraph one</p>"
+            "<ul><li>Item A</li><li>Item B</li></ul>]]></content:encoded></item>",
+        )
+
+        result = extract_entry_body(entry, "T")
+
+        lines = [line.strip() for line in result.splitlines() if line.strip()]
+        assert lines == ["Heading", "Paragraph one", "Item A", "Item B"]
+
+    def test_本文の前後に余分な空白は残らない(self):
         entry = self._entry(
             "<item><title>T</title><link>http://example.com/1</link>"
             "<content:encoded><![CDATA[<h1>Heading</h1><p>Paragraph one</p>"
@@ -292,5 +304,3 @@ class Test本文抽出:
         result = extract_entry_body(entry, "T")
 
         assert result == result.strip()
-        lines = [line.strip() for line in result.splitlines() if line.strip()]
-        assert lines == ["Heading", "Paragraph one", "Item A", "Item B"]

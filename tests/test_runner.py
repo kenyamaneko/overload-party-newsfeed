@@ -107,7 +107,7 @@ def _assert_no_message_published(subscriber_client, subscription_path: str) -> N
 
 
 class Test記事の処理と配信:
-    def test_未処理の記事が1件取得できたとき要約結果を反映したイベントがpublishされ元記事URLと一致する(
+    def test_未処理の記事が1件取得できたとき要約結果を反映したイベントが配信され元記事URLと一致する(
         self, redis_client, pubsub_emulator, pubsub_topic,
     ):
         project_id, topic_name, subscription_path = pubsub_topic
@@ -127,7 +127,7 @@ class Test記事の処理と配信:
         assert len(received) == 1
         assert _source_url(received[0]) == "https://example.com/new"
 
-    def test_処理済みと未処理が両方取得できたとき未処理の記事のイベントのみpublishされる(
+    def test_処理済みと未処理が両方取得できたとき未処理の記事のイベントのみ配信される(
         self, redis_client, pubsub_emulator, pubsub_topic,
     ):
         project_id, topic_name, subscription_path = pubsub_topic
@@ -151,7 +151,7 @@ class Test記事の処理と配信:
         assert len(received) == 1
         assert _source_url(received[0]) == "https://example.com/new"
 
-    def test_記事の要約が失敗したときその記事はpublishされず次に処理すると再び未処理として扱われる(
+    def test_記事の要約が失敗したときその記事は配信されず次に処理すると再び未処理として扱われる(
         self, redis_client, pubsub_emulator, pubsub_topic,
     ):
         project_id, topic_name, subscription_path = pubsub_topic
@@ -171,7 +171,7 @@ class Test記事の処理と配信:
         _assert_no_message_published(subscriber, subscription_path)
         assert dedup.reserve("https://example.com/fail") is True
 
-    def test_記事のpublishが失敗したとき次に処理すると再び未処理として扱われる(self, redis_client, pubsub_emulator, pubsub_topic):
+    def test_記事の配信が失敗したとき次に処理すると再び未処理として扱われる(self, redis_client, pubsub_emulator, pubsub_topic):
         project_id, _topic_name, _subscription_path = pubsub_topic
         dedup = DedupStore(redis_client)
         failing_publisher = ArticlePublisher(
@@ -190,7 +190,7 @@ class Test記事の処理と配信:
 
 
 class Test処理失敗のジョブ終了:
-    def test_記事の要約またはpublishが1件以上失敗したとき全ての記事の処理を終えてから失敗件数を含む例外になる(
+    def test_記事の要約または配信が1件以上失敗したとき全ての記事の処理を終えてから失敗件数を含む例外になる(
         self, redis_client, pubsub_emulator, pubsub_topic,
     ):
         project_id, topic_name, subscription_path = pubsub_topic
@@ -215,7 +215,7 @@ class Test処理失敗のジョブ終了:
         assert len(received) == 1
         assert _source_url(received[0]) == "https://example.com/ok"
 
-    def test_取得元の一部のソースが失敗し他から正常に取得できたとき正常な記事はpublishされ失敗件数を含む例外になる(
+    def test_取得元の一部のソースが失敗し他から正常に取得できたとき正常な記事は配信され失敗件数を含む例外になる(
         self, redis_client, pubsub_emulator, pubsub_topic,
     ):
         project_id, topic_name, subscription_path = pubsub_topic
@@ -260,7 +260,7 @@ class Test処理失敗のジョブ終了:
         assert len(received) == 1
         assert _source_url(received[0]) == "https://example.com/ok"
 
-    def test_記事処理の失敗ソースの失敗本文欠落が同時に起きたとき例外に全ての件数が含まれる(
+    def test_記事処理の失敗とソースの失敗と本文欠落が同時に起きたとき例外に全ての件数が含まれる(
         self, redis_client, pubsub_emulator, pubsub_topic,
     ):
         project_id, topic_name, _subscription_path = pubsub_topic
@@ -337,13 +337,13 @@ class Test環境変数からの設定読み込み:
             ),
         ],
     )
-    def test_cfgを指定せず必須の環境変数が未設定のとき未設定の環境変数名を理由とするエラーになる(self, env, missing_var):
+    def test_設定を指定せず必須の環境変数が未設定のとき未設定の環境変数名を理由とするエラーになる(self, env, missing_var):
         with patch.dict(os.environ, env, clear=True), pytest.raises(ValueError, match=missing_var):
             run()
 
 
 class Test実接続の組み立て:
-    def test_dedupとpublisher引数を指定しないときcfgの接続情報から実際の接続を組み立てて処理する(
+    def test_重複排除の予約先と配信先を指定しないとき設定の接続情報に基づいて重複排除の予約と記事の配信が実際に行われる(
         self, monkeypatch, redis_client, valkey_url, pubsub_emulator, pubsub_topic,
     ):
         project_id, topic_name, subscription_path = pubsub_topic
