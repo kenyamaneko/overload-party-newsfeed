@@ -34,7 +34,7 @@ def _pull_one_message(subscriber_client, subscription_path: str) -> dict:
 
 
 class Test記事イベントの配信:
-    def test_配信すると指定したプロジェクトとトピック宛てに送信され購読側で受信できる(self, pubsub_emulator, pubsub_topic):
+    def test_配信すると指定したプロジェクトとトピック宛てに送信されサブスクライバーが受信できる(self, pubsub_emulator, pubsub_topic):
         project_id, topic_name, subscription_path = pubsub_topic
         publisher = ArticlePublisher(project_id, topic_name, client=pubsub_emulator.get_publisher_client())
         event = ArticleEvent(

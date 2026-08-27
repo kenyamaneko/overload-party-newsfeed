@@ -78,14 +78,14 @@ class Test本文の長さ:
         assert body in prompt
 
     def test_本文の長さが4000文字を超えるときモデルへの依頼内容に含まれる本文は先頭4000文字までに切り詰められそれ以降は含まれない(self):
-        body = "a" * 4000 + "excess-tail"
+        body = "a" * 4000 + "X"
         summarizer, mock_model = _build_summarizer_with_mock_model(text=json.dumps({"summary": "要約", "tags": []}))
 
         summarizer.summarize("title", body)
 
         prompt = mock_model.generate_content.call_args[0][0]
         assert body[:4000] in prompt
-        assert "excess-tail" not in prompt
+        assert "X" not in prompt
 
 
 class Test要約の失敗:

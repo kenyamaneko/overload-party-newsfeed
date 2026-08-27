@@ -3,7 +3,7 @@ import time
 
 from newsfeed.dedup import DedupStore
 
-_THIRTY_DAYS_SECONDS = 30 * 24 * 60 * 60
+_ONE_DAY_SECONDS = 24 * 60 * 60
 
 
 def _the_only_key(redis_client) -> str:
@@ -69,11 +69,21 @@ class Test予約の有効期限:
 
         assert store.reserve("https://example.com/a") is True
 
-    def test_新規に予約したURLの有効期限は30日相当である(self, redis_client):
+    def test_予約から29日後に再予約すると失敗する(self, redis_client):
         store = DedupStore(redis_client)
         store.reserve("https://example.com/a")
         key = _the_only_key(redis_client)
+        remaining_seconds_after_29_days = redis_client.ttl(key) - 29 * _ONE_DAY_SECONDS
+        redis_client.pexpire(key, max(remaining_seconds_after_29_days * 1000, 1))
 
-        ttl = redis_client.ttl(key)
+        assert store.reserve("https://example.com/a") is False
 
-        assert _THIRTY_DAYS_SECONDS - 60 <= ttl <= _THIRTY_DAYS_SECONDS
+    def test_予約から31日後に再予約すると成功する(self, redis_client):
+        store = DedupStore(redis_client)
+        store.reserve("https://example.com/a")
+        key = _the_only_key(redis_client)
+        remaining_seconds_after_31_days = redis_client.ttl(key) - 31 * _ONE_DAY_SECONDS
+        redis_client.pexpire(key, max(remaining_seconds_after_31_days * 1000, 50))
+        time.sleep(0.2)
+
+        assert store.reserve("https://example.com/a") is True
