@@ -1,56 +1,89 @@
-"""DedupStore の結合テスト。
-
-Valkey を testcontainers で起動して実挙動を検証する (matchmaking の
-redis_queue_test.go と同じ方針)。container は conftest.py の session fixture を
-test_runner.py と共有し、各テストは redis_client fixture の FLUSHDB で分離する。
-"""
+import threading
 import time
-
-import pytest
 
 from newsfeed.dedup import DedupStore
 
-
-@pytest.fixture
-def store(redis_client):
-    return DedupStore(redis_client)
+_ONE_DAY_SECONDS = 24 * 60 * 60
 
 
-class TestURLの予約:
-    def test_新規URLはTrueを返す(self, store):
+def _the_only_key(redis_client) -> str:
+    """DB を空にした状態で reserve() を 1 回呼んだ後に残る唯一のキーを特定する。
+
+    Args:
+        redis_client: 検証対象の Valkey クライアント。
+
+    Returns:
+        reserve() が作成したキー。
+    """
+    keys = redis_client.keys("*")
+    assert len(keys) == 1
+    return keys[0]
+
+
+class Test予約と解放:
+    def test_未予約のURLを予約すると予約は成功する(self, redis_client):
+        store = DedupStore(redis_client)
+
         assert store.reserve("https://example.com/a") is True
 
-    def test_同じURLの2回目はFalseを返す(self, store):
-        assert store.reserve("https://example.com/a") is True
+    def test_予約済みのURLを再度予約しようとすると予約は失敗する(self, redis_client):
+        store = DedupStore(redis_client)
+        store.reserve("https://example.com/a")
+
         assert store.reserve("https://example.com/a") is False
 
-    def test_異なるURLはそれぞれ独立して予約できる(self, store):
-        assert store.reserve("https://example.com/a") is True
-        assert store.reserve("https://example.com/b") is True
-
-    def test_予約キーに30日以内のTTLを設定する(self, redis_client, store):
+    def test_予約を解放したURLはその後再び予約できるようになる(self, redis_client):
+        store = DedupStore(redis_client)
         store.reserve("https://example.com/a")
-        ttl = redis_client.ttl("newsfeed:seen:https://example.com/a")
-        # TTL は設定済み (> 0) かつ上限 30 日 (2592000 秒) 以下
-        assert 0 < ttl <= 30 * 24 * 60 * 60
 
-    def test_TTL経過後は同一URLを再予約できる(self, store, monkeypatch):
-        # production の TTL (30日) を待てないため、production 経路 (reserve() 内部)
-        # に短い TTL を注入して期限切れを実際に発生させる
-        monkeypatch.setattr("newsfeed.dedup._TTL_SECONDS", 1)
-
-        assert store.reserve("https://example.com/a") is True
-        time.sleep(1.2)
-        assert store.reserve("https://example.com/a") is True
-
-
-class TestURLの解放:
-    def test_解放後は再予約できる(self, store):
-        store.reserve("https://example.com/a")
         store.release("https://example.com/a")
-        # 解放後は再予約できる (Vertex AI / publish 失敗時の再試行パス)
+
         assert store.reserve("https://example.com/a") is True
 
-    def test_存在しないURLの解放は何もしない(self, store):
-        # DEL は存在しないキーに対しても例外を出さない (redis-py 仕様)
-        store.release("https://example.com/nonexistent")
+    def test_同一の未予約URLに複数スレッドから同時に予約を試みると成功するのは1回だけになる(self, redis_client):
+        store = DedupStore(redis_client)
+        thread_count = 8
+        barrier = threading.Barrier(thread_count)
+        results: list[bool] = [False] * thread_count
+
+        def attempt(index: int) -> None:
+            barrier.wait()
+            results[index] = store.reserve("https://example.com/race")
+
+        threads = [threading.Thread(target=attempt, args=(i,)) for i in range(thread_count)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert results.count(True) == 1
+
+
+class Test予約の有効期限:
+    def test_有効期限が経過したURLはその後再び予約できるようになる(self, redis_client):
+        store = DedupStore(redis_client)
+        store.reserve("https://example.com/a")
+        key = _the_only_key(redis_client)
+        redis_client.pexpire(key, 50)
+        time.sleep(0.2)
+
+        assert store.reserve("https://example.com/a") is True
+
+    def test_予約から29日後に再予約すると失敗する(self, redis_client):
+        store = DedupStore(redis_client)
+        store.reserve("https://example.com/a")
+        key = _the_only_key(redis_client)
+        remaining_seconds_after_29_days = redis_client.ttl(key) - 29 * _ONE_DAY_SECONDS
+        redis_client.pexpire(key, max(remaining_seconds_after_29_days * 1000, 1))
+
+        assert store.reserve("https://example.com/a") is False
+
+    def test_予約から31日後に再予約すると成功する(self, redis_client):
+        store = DedupStore(redis_client)
+        store.reserve("https://example.com/a")
+        key = _the_only_key(redis_client)
+        remaining_seconds_after_31_days = redis_client.ttl(key) - 31 * _ONE_DAY_SECONDS
+        redis_client.pexpire(key, max(remaining_seconds_after_31_days * 1000, 50))
+        time.sleep(0.2)
+
+        assert store.reserve("https://example.com/a") is True

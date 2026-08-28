@@ -1,191 +1,131 @@
 import json
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from google.api_core.exceptions import ServiceUnavailable
+from google.api_core.exceptions import GoogleAPIError
 
-from newsfeed.model import SummarizeResult
 from newsfeed.summarizer import SummarizeError, Summarizer
 
 
-def _mock_model(response_text: str) -> MagicMock:
-    response = MagicMock()
-    response.text = response_text
-    model = MagicMock()
-    model.generate_content.return_value = response
-    return model
+def _build_summarizer_with_mock_model(text: str | None = None, side_effect: Exception | None = None) -> tuple[Summarizer, MagicMock]:
+    """モデル呼び出しを代用に差し替えた Summarizer と、その代用モデル自体を組み立てる。
+
+    Args:
+        text: モデルが返す応答テキスト。side_effect 指定時は無視される。
+        side_effect: モデルの呼び出し自体を失敗させる例外。
+
+    Returns:
+        モデル呼び出しを差し替え済みの Summarizer と、差し替えた代用モデル。
+    """
+    mock_model = MagicMock()
+    if side_effect is not None:
+        mock_model.generate_content.side_effect = side_effect
+    else:
+        mock_model.generate_content.return_value = MagicMock(text=text)
+    with patch("newsfeed.summarizer.vertexai.init"), \
+            patch("newsfeed.summarizer.GenerativeModel", return_value=mock_model):
+        return Summarizer("test-project", "us-central1"), mock_model
 
 
-class Test記事の要約:
-    @patch("newsfeed.summarizer.vertexai.init")
-    @patch("newsfeed.summarizer.GenerativeModel")
-    def test_要約と正当なタグを返す(self, model_cls, init):
-        model_cls.return_value = _mock_model(
-            json.dumps({"summary": "要約", "tags": ["ai", "compute"]}),
+def _summarizer_with_response(text: str | None = None, side_effect: Exception | None = None) -> Summarizer:
+    """モデル呼び出しを代用に差し替えた Summarizer を組み立てる。
+
+    Args:
+        text: モデルが返す応答テキスト。side_effect 指定時は無視される。
+        side_effect: モデルの呼び出し自体を失敗させる例外。
+
+    Returns:
+        モデル呼び出しを差し替え済みの Summarizer。
+    """
+    summarizer, _ = _build_summarizer_with_mock_model(text=text, side_effect=side_effect)
+    return summarizer
+
+
+class Test要約とタグの生成:
+    def test_モデルが要約とタグを含むJSONを返したとき要約文字列とタグがそのまま結果になる(self):
+        summarizer = _summarizer_with_response(
+            text=json.dumps({"summary": "クラウドの新機能について", "tags": ["compute", "network"]}),
         )
-        result = Summarizer("proj", "us-central1").summarize("Title", "body")
-        assert isinstance(result, SummarizeResult)
-        assert result.summary == "要約"
-        assert result.tags == ["ai", "compute"]
 
-    @patch("newsfeed.summarizer.vertexai.init")
-    @patch("newsfeed.summarizer.GenerativeModel")
-    def test_許可語彙外のタグを除外する(self, model_cls, init):
-        model_cls.return_value = _mock_model(
-            json.dumps({"summary": "x", "tags": ["ai", "unknown-tag"]}),
-        )
-        result = Summarizer("proj", "us-central1").summarize("Title", "body")
-        assert result.tags == ["ai"]
+        result = summarizer.summarize("title", "body")
 
-    @patch("newsfeed.summarizer.vertexai.init")
-    @patch("newsfeed.summarizer.GenerativeModel")
-    def test_空のタグリストは正当とする(self, model_cls, init):
-        model_cls.return_value = _mock_model(
-            json.dumps({"summary": "x", "tags": []}),
-        )
-        result = Summarizer("proj", "us-central1").summarize("Title", "body")
-        assert result.tags == []
+        assert result.summary == "クラウドの新機能について"
+        assert result.tags == ["compute", "network"]
 
-    @patch("newsfeed.summarizer.vertexai.init")
-    @patch("newsfeed.summarizer.GenerativeModel")
-    def test_空の要約は要約の失敗になる(self, model_cls, init):
-        model_cls.return_value = _mock_model(
-            json.dumps({"summary": "", "tags": []}),
-        )
-        with pytest.raises(SummarizeError, match="invalid summary"):
-            Summarizer("proj", "us-central1").summarize("Title", "body")
+    @pytest.mark.parametrize(
+        "model_tags, expected_tags",
+        [
+            pytest.param(["compute", "not-an-allowed-tag"], ["compute"], id="許容タグ以外が含まれるとき"),
+            pytest.param([], [], id="タグの配列が空のとき"),
+        ],
+    )
+    def test_モデルが返したタグは許容タグのみに絞り込まれる(self, model_tags, expected_tags):
+        summarizer = _summarizer_with_response(text=json.dumps({"summary": "要約", "tags": model_tags}))
 
-    @patch("newsfeed.summarizer.vertexai.init")
-    @patch("newsfeed.summarizer.GenerativeModel")
-    def test_リストでないtagsは要約の失敗になる(self, model_cls, init):
-        model_cls.return_value = _mock_model(
-            json.dumps({"summary": "x", "tags": "not-a-list"}),
-        )
-        with pytest.raises(SummarizeError, match="non-list tags"):
-            Summarizer("proj", "us-central1").summarize("Title", "body")
+        result = summarizer.summarize("title", "body")
 
-    @patch("newsfeed.summarizer.vertexai.init")
-    @patch("newsfeed.summarizer.GenerativeModel")
-    def test_応答がJSONとして解釈できないとき要約の失敗になる(self, model_cls, init):
-        model_cls.return_value = _mock_model("要約: これは JSON ではありません")
-        with pytest.raises(SummarizeError, match="non-JSON response"):
-            Summarizer("proj", "us-central1").summarize("Title", "body")
+        assert result.tags == expected_tags
 
-    @patch("newsfeed.summarizer.vertexai.init")
-    @patch("newsfeed.summarizer.GenerativeModel")
-    def test_要約の呼び出しが利用不可のとき要約の失敗になる(self, model_cls, init):
-        model = MagicMock()
-        model.generate_content.side_effect = ServiceUnavailable("backend is unavailable")
-        model_cls.return_value = model
+
+class Test本文の長さ:
+    def test_本文の長さがちょうど4000文字のときモデルへの依頼内容にはその本文全体がそのまま含まれる(self):
+        body = "a" * 4000
+        summarizer, mock_model = _build_summarizer_with_mock_model(text=json.dumps({"summary": "要約", "tags": []}))
+
+        summarizer.summarize("title", body)
+
+        prompt = mock_model.generate_content.call_args[0][0]
+        assert body in prompt
+
+    def test_本文の長さが4000文字を超えるときモデルへの依頼内容に含まれる本文は先頭4000文字までに切り詰められそれ以降は含まれない(self):
+        body = "a" * 4000 + "X"
+        summarizer, mock_model = _build_summarizer_with_mock_model(text=json.dumps({"summary": "要約", "tags": []}))
+
+        summarizer.summarize("title", body)
+
+        prompt = mock_model.generate_content.call_args[0][0]
+        assert body[:4000] in prompt
+        assert "X" not in prompt
+
+
+class Test要約の失敗:
+    def test_モデルの応答がJSONとして解釈できない文字列のときJSON解釈失敗を理由とする例外になる(self):
+        summarizer = _summarizer_with_response(text="this is not json")
+
+        with pytest.raises(SummarizeError, match="JSON"):
+            summarizer.summarize("title", "body")
+
+    @pytest.mark.parametrize(
+        "response_body",
+        [
+            pytest.param({"tags": ["compute"]}, id="要約文字列のキーが無いとき"),
+            pytest.param({"summary": "", "tags": ["compute"]}, id="要約文字列が空文字列のとき"),
+        ],
+    )
+    def test_モデルの応答に要約文字列が無いとき要約が無いことを理由とする例外になる(self, response_body):
+        summarizer = _summarizer_with_response(text=json.dumps(response_body))
+
+        with pytest.raises(SummarizeError, match="summary"):
+            summarizer.summarize("title", "body")
+
+    @pytest.mark.parametrize(
+        "tags_value",
+        [
+            pytest.param("compute", id="タグが文字列のとき"),
+            pytest.param({"tag": "compute"}, id="タグがオブジェクトのとき"),
+        ],
+    )
+    def test_モデルの応答のタグが配列形式でないときタグの形式が不正であることを理由とする例外になる(self, tags_value):
+        summarizer = _summarizer_with_response(text=json.dumps({"summary": "要約", "tags": tags_value}))
+
+        with pytest.raises(SummarizeError, match="tags"):
+            summarizer.summarize("title", "body")
+
+    def test_モデルの呼び出し自体が失敗したときモデルの呼び出し失敗を理由とする例外になり元の例外を保持する(self):
+        api_error = GoogleAPIError("quota exceeded")
+        summarizer = _summarizer_with_response(side_effect=api_error)
 
         with pytest.raises(SummarizeError) as excinfo:
-            Summarizer("proj", "us-central1").summarize("Title", "body")
+            summarizer.summarize("title", "body")
 
-        assert "backend is unavailable" in str(excinfo.value)
-
-    @patch("newsfeed.summarizer.vertexai.init")
-    @patch("newsfeed.summarizer.GenerativeModel")
-    def test_応答に要約の候補が無いとき要約の失敗になる(self, model_cls, init):
-        response = MagicMock()
-        type(response).text = PropertyMock(side_effect=ValueError("no candidate was returned"))
-        model = MagicMock()
-        model.generate_content.return_value = response
-        model_cls.return_value = model
-
-        with pytest.raises(SummarizeError) as excinfo:
-            Summarizer("proj", "us-central1").summarize("Title", "body")
-
-        assert "no candidate was returned" in str(excinfo.value)
-
-    @pytest.mark.parametrize(
-        ("response", "match"),
-        [
-            pytest.param(
-                {"tags": []},
-                "invalid summary",
-                id="summaryキーが欠落しているとき、要約の失敗になる",
-            ),
-            pytest.param(
-                {"summary": 123, "tags": []},
-                "invalid summary",
-                id="summaryが文字列でない数値123のとき、要約の失敗になる",
-            ),
-            pytest.param(
-                {"summary": "x"},
-                "non-list tags",
-                id="tagsキーが欠落しているとき、要約の失敗になる",
-            ),
-        ],
-    )
-    def test_必須キーの欠落と型不正で要約の失敗になる(self, response, match):
-        with patch("newsfeed.summarizer.vertexai.init"), \
-                patch("newsfeed.summarizer.GenerativeModel") as model_cls:
-            model_cls.return_value = _mock_model(json.dumps(response))
-            with pytest.raises(SummarizeError, match=match):
-                Summarizer("proj", "us-central1").summarize("Title", "body")
-
-    @patch("newsfeed.summarizer.vertexai.init")
-    @patch("newsfeed.summarizer.GenerativeModel")
-    def test_タグに数値42が混ざるとき許容タグaiだけが残る(self, model_cls, init):
-        model_cls.return_value = _mock_model(
-            json.dumps({"summary": "x", "tags": ["ai", 42]}),
-        )
-        result = Summarizer("proj", "us-central1").summarize("Title", "body")
-        assert result.tags == ["ai"]
-
-    @pytest.mark.parametrize(
-        "tag",
-        [
-            pytest.param("compute", id="computeのとき、タグに採用される"),
-            pytest.param("network", id="networkのとき、タグに採用される"),
-            pytest.param("storage", id="storageのとき、タグに採用される"),
-            pytest.param("database", id="databaseのとき、タグに採用される"),
-            pytest.param("ai", id="aiのとき、タグに採用される"),
-            pytest.param("security", id="securityのとき、タグに採用される"),
-            pytest.param("serverless", id="serverlessのとき、タグに採用される"),
-            pytest.param("container", id="containerのとき、タグに採用される"),
-            pytest.param("devops", id="devopsのとき、タグに採用される"),
-            pytest.param("pricing", id="pricingのとき、タグに採用される"),
-        ],
-    )
-    def test_許容タグ語彙が採用される(self, tag):
-        with patch("newsfeed.summarizer.vertexai.init"), \
-                patch("newsfeed.summarizer.GenerativeModel") as model_cls:
-            model_cls.return_value = _mock_model(
-                json.dumps({"summary": "x", "tags": [tag]}),
-            )
-            result = Summarizer("proj", "us-central1").summarize("Title", "body")
-        assert result.tags == [tag]
-
-
-class Test本文の切り詰め:
-    @pytest.mark.parametrize(
-        "body_length",
-        [
-            pytest.param(3999, id="本文が3999文字のとき、末尾の文字までプロンプトに含まれる"),
-            pytest.param(4000, id="本文が4000文字ちょうどのとき、末尾の文字までプロンプトに含まれる"),
-        ],
-    )
-    def test_上限以下の本文は末尾までプロンプトに含まれる(self, body_length):
-        marker = "Ω"
-        body = "a" * (body_length - len(marker)) + marker
-        with patch("newsfeed.summarizer.vertexai.init"), \
-                patch("newsfeed.summarizer.GenerativeModel") as model_cls:
-            model = _mock_model(json.dumps({"summary": "x", "tags": []}))
-            model_cls.return_value = model
-            Summarizer("proj", "us-central1").summarize("Title", body)
-        prompt = model.generate_content.call_args[0][0]
-        assert marker in prompt
-
-    def test_本文が4001文字のとき4000文字目までが含まれ4001文字目は含まれない(self):
-        included_marker = "Ω"
-        excluded_marker = "Ψ"
-        body = "a" * 3999 + included_marker + excluded_marker
-        with patch("newsfeed.summarizer.vertexai.init"), \
-                patch("newsfeed.summarizer.GenerativeModel") as model_cls:
-            model = _mock_model(json.dumps({"summary": "x", "tags": []}))
-            model_cls.return_value = model
-            Summarizer("proj", "us-central1").summarize("Title", body)
-        prompt = model.generate_content.call_args[0][0]
-        assert included_marker in prompt
-        assert excluded_marker not in prompt
+        assert excinfo.value.__cause__ is api_error

@@ -85,7 +85,7 @@ class Testエントリポイントの実行:
 
         mock_run.assert_called_once()
 
-    def test_一部のRSSソースの取得に失敗したとき成功分をpublishした上で終了コード1で終了する(
+    def test_一部のRSSソースの取得に失敗したとき成功分を配信した上で終了コード1で終了する(
         self, capsys, preserve_root_logger,
     ):
         publisher = MagicMock()
@@ -153,7 +153,7 @@ class Testエントリポイントの実行:
         assert "CRITICAL" in out
         assert "all 2 feed sources failed" in out
 
-    def test_記事のpublishが失敗したときログに例外の型が完全修飾名で出る(
+    def test_記事の配信が失敗したときログに例外の型が完全修飾名で出る(
         self, capsys, preserve_root_logger,
     ):
         publisher = MagicMock()

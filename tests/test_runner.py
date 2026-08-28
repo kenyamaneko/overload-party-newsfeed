@@ -1,378 +1,370 @@
 import json
 import os
+import re
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from newsfeed.config import Config
 from newsfeed.dedup import DedupStore
+from newsfeed.fetcher import FetchError
 from newsfeed.model import FetchedItem, FetchResult, MalformedEntry, SummarizeResult
-from newsfeed.publisher import PublishError
-from newsfeed.runner import JobFailedError, _fetch_and_publish, run
+from newsfeed.publisher import ArticlePublisher
+from newsfeed.runner import JobFailedError, run
 from newsfeed.summarizer import SummarizeError
 
+_DUMMY_CFG = Config(
+    google_cloud_project="unused-project",
+    redis_url="redis://unused:6379",
+    vertex_location="us-central1",
+    news_article_collected_topic="unused-topic",
+)
+_REQUIRED_ENV = {
+    "GOOGLE_CLOUD_PROJECT": "test-project",
+    "VERTEX_LOCATION": "us-central1",
+    "NEWS_ARTICLE_COLLECTED_TOPIC": "test-topic",
+}
 
-def _item(n: int) -> FetchedItem:
-    return FetchedItem(
-        source="aws",
-        source_url=f"https://example.com/{n}",
-        title=f"Article {n}",
-        body=f"body{n}",
-    )
 
-
-def _fetched(items, failed_sources=None, malformed_entries=None) -> FetchResult:
-    """記事と失敗から fetch_all の戻り値を組み立てる。
+def _fixed_summarizer(raise_for_titles: frozenset[str] = frozenset()) -> MagicMock:
+    """要約結果を固定した Summarizer の代用を組み立てる。
 
     Args:
-        items: 取得できた記事。
-        failed_sources: 取得に失敗したソース名。省略時は失敗なし。
-        malformed_entries: 本文が空でスキップしたエントリ。省略時はスキップなし。
+        raise_for_titles: 要約を失敗させたい記事のタイトル集合。
 
     Returns:
-        fetch_all が返す形の FetchResult。
+        指定タイトル以外は固定の SummarizeResult を返す代用。
     """
-    return FetchResult(
-        items=items,
-        failed_sources=failed_sources or [],
-        malformed_entries=malformed_entries or [],
-    )
+    summarizer = MagicMock()
+
+    def fake_summarize(title: str, body: str) -> SummarizeResult:
+        if title in raise_for_titles:
+            raise SummarizeError(f"summarization failed for {title}")
+        return SummarizeResult(summary=f"summary of {title}", tags=[])
+
+    summarizer.summarize.side_effect = fake_summarize
+    return summarizer
 
 
-def _summarizer(summary: str = "要約", tags=None) -> MagicMock:
-    m = MagicMock()
-    m.summarize.return_value = SummarizeResult(summary=summary, tags=tags or [])
-    return m
+def _pull_messages(subscriber_client, subscription_path: str, max_messages: int, timeout: float = 10) -> list:
+    """subscription から最大 max_messages 件を受信し ack する。
 
+    最初に受信できた 1 回分の応答をそのまま結果として返す。応答が届くまで
+    (emulator への伝播待ちのため) 短い間隔で pull をリトライするが、既に
+    届いた分より多く集めようと ack 前に pull を繰り返すと同じ未 ack
+    メッセージが再配送されるため、複数回の pull にまたがって集計しない。
 
-class _RecordingPublisher:
-    """publish された event を記録するだけの fake。"""
+    Args:
+        subscriber_client: pull に使う subscriber クライアント。
+        subscription_path: 対象の subscription。
+        max_messages: 受信を試みる最大件数。
+        timeout: 受信を待つ最大秒数。
 
-    def __init__(self) -> None:
-        self.published_events: list = []
-
-    def publish(self, event) -> None:
-        self.published_events.append(event)
-
-
-@pytest.fixture
-def dedup_store(redis_client) -> DedupStore:
-    return DedupStore(redis_client)
-
-
-class Test配信先トピックの決定:
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_環境変数に設定したトピックの購読で記事を受け取れる(
-        self, mock_ulid, mock_fetch_all, pubsub_emulator, pubsub_topic,
-    ):
-        project_id, topic, subscription_path = pubsub_topic
-        mock_fetch_all.return_value = _fetched([_item(1)])
-        mock_ulid.return_value = "01ABC"
-
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-
-        env = {
-            "APP_ENV": "local",
-            "GOOGLE_CLOUD_PROJECT": project_id,
-            "VERTEX_LOCATION": "us-central1",
-            "NEWS_ARTICLE_COLLECTED_TOPIC": topic,
-            "UPSTASH_REDIS_URL": "redis://localhost:6379/0",
-            "PUBSUB_EMULATOR_HOST": pubsub_emulator.get_pubsub_emulator_host(),
-        }
-        with patch.dict(os.environ, env, clear=True):
-            run(dedup=dedup, summarizer=_summarizer())
-
-        subscriber_client = pubsub_emulator.get_subscriber_client()
+    Returns:
+        受信した received_messages の一覧 (max_messages 未満のこともある)。
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         response = subscriber_client.pull(
-            request={"subscription": subscription_path, "max_messages": 1},
-            timeout=10,
+            request={"subscription": subscription_path, "max_messages": max_messages},
+            timeout=2,
         )
-        subscriber_client.close()
+        if response.received_messages:
+            subscriber_client.acknowledge(
+                request={
+                    "subscription": subscription_path,
+                    "ack_ids": [m.ack_id for m in response.received_messages],
+                },
+            )
+            return response.received_messages
+    return []
 
-        assert len(response.received_messages) == 1
-        decoded = json.loads(response.received_messages[0].message.data.decode("utf-8"))
-        assert decoded["source_url"] == "https://example.com/1"
+
+def _source_url(received_message) -> str:
+    """受信メッセージのペイロードから元記事の URL を取り出す。
+
+    Args:
+        received_message: pull で受信した ReceivedMessage。
+
+    Returns:
+        ペイロードの source_url。
+    """
+    return json.loads(received_message.message.data)["source_url"]
 
 
-class Test取得から配信までの処理:
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_新規記事は予約後にpublishされ予約マーカーが実Redisに残る(self, mock_ulid, mock_fetch_all, dedup_store):
-        mock_fetch_all.return_value = _fetched([_item(1)])
-        mock_ulid.return_value = "01ABC"
+def _assert_no_message_published(subscriber_client, subscription_path: str) -> None:
+    """subscription に一定時間待ってもメッセージが届かないことを確認する。
 
-        summarizer = _summarizer()
-        publisher = _RecordingPublisher()
+    Args:
+        subscriber_client: pull に使う subscriber クライアント。
+        subscription_path: 対象の subscription。
+    """
+    response = subscriber_client.pull(
+        request={"subscription": subscription_path, "max_messages": 10}, timeout=3,
+    )
+    assert response.received_messages == []
 
-        _fetch_and_publish(dedup_store, summarizer, publisher)
 
-        assert [e.source_url for e in publisher.published_events] == ["https://example.com/1"]
-        # reserve() の再呼び出しが False を返すことで、予約マーカーが実際に残っていることを確認する
-        assert dedup_store.reserve("https://example.com/1") is False
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_予約済みの記事と新規記事が混在するとき新規記事のみpublishされる(self, mock_ulid, mock_fetch_all, dedup_store):
-        # 1 件目を事前に予約済み (= 既見) にしておく
-        dedup_store.reserve("https://example.com/1")
-
-        mock_fetch_all.return_value = _fetched([_item(1), _item(2)])
-        mock_ulid.return_value = "01ABC"
-
-        summarizer = _summarizer()
-        publisher = _RecordingPublisher()
-
-        _fetch_and_publish(dedup_store, summarizer, publisher)
-
-        assert [e.source_url for e in publisher.published_events] == ["https://example.com/2"]
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_要約失敗時はマーカーを解放する(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = _fetched([_item(1)])
-        mock_ulid.return_value = "01ABC"
-
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = MagicMock()
-        summarizer.summarize.side_effect = SummarizeError("vertex down")
-        publisher = MagicMock()
-
-        with pytest.raises(JobFailedError, match="1 article\\(s\\) failed to process"):
-            _fetch_and_publish(dedup, summarizer, publisher)
-
-        dedup.release.assert_called_once_with("https://example.com/1")
-        publisher.publish.assert_not_called()
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_publish失敗時はマーカーを解放する(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = _fetched([_item(1)])
-        mock_ulid.return_value = "01ABC"
-
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = _summarizer()
-        publisher = MagicMock()
-        publisher.publish.side_effect = PublishError("pubsub down")
-
-        with pytest.raises(JobFailedError, match="1 article\\(s\\) failed to process"):
-            _fetch_and_publish(dedup, summarizer, publisher)
-
-        dedup.release.assert_called_once_with("https://example.com/1")
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_個別失敗後も残りの記事の処理を継続する(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = _fetched([_item(1), _item(2), _item(3)])
-        mock_ulid.return_value = "01ABC"
-
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = _summarizer()
-        publisher = MagicMock()
-        publisher.publish.side_effect = [PublishError("fail"), None, None]
-
-        with pytest.raises(JobFailedError, match="1 article\\(s\\) failed to process"):
-            _fetch_and_publish(dedup, summarizer, publisher)
-
-        # 1 件失敗後も残り 2 件の publish が試行される
-        assert publisher.publish.call_count == 3
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_1件目の要約が失敗したとき1件目は飛ばされ2件目がpublishされる(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = _fetched([_item(1), _item(2)])
-        mock_ulid.return_value = "01ABC"
-
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = MagicMock()
-        summarizer.summarize.side_effect = [
-            SummarizeError("vertex down"),
-            SummarizeResult(summary="要約", tags=[]),
-        ]
-        publisher = _RecordingPublisher()
-
-        with pytest.raises(JobFailedError, match="1 article\\(s\\) failed to process"):
-            _fetch_and_publish(dedup, summarizer, publisher)
-
-        assert [e.source_url for e in publisher.published_events] == ["https://example.com/2"]
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_記事の処理で想定外の失敗が起きたとき残りの記事を処理せず呼び出し元へ送出する(
-        self, mock_ulid, mock_fetch_all,
+class Test記事の処理と配信:
+    def test_未処理の記事が1件取得できたとき要約結果を反映したイベントが配信され元記事URLと一致する(
+        self, redis_client, pubsub_emulator, pubsub_topic,
     ):
-        mock_fetch_all.return_value = _fetched([_item(1), _item(2)])
-        mock_ulid.return_value = "01ABC"
+        project_id, topic_name, subscription_path = pubsub_topic
+        dedup = DedupStore(redis_client)
+        publisher = ArticlePublisher(project_id, topic_name, client=pubsub_emulator.get_publisher_client())
+        fetched = FetchResult(
+            items=[FetchedItem(source="aws", source_url="https://example.com/new", title="New", body="body")],
+            failed_sources=[],
+            malformed_entries=[],
+        )
 
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = MagicMock()
-        summarizer.summarize.side_effect = AttributeError("summarizer is misconfigured")
-        publisher = _RecordingPublisher()
+        with patch("newsfeed.runner.fetch_all", return_value=fetched):
+            run(cfg=_DUMMY_CFG, dedup=dedup, summarizer=_fixed_summarizer(), publisher=publisher)
 
-        with pytest.raises(AttributeError, match="summarizer is misconfigured"):
-            _fetch_and_publish(dedup, summarizer, publisher)
+        subscriber = pubsub_emulator.get_subscriber_client()
+        received = _pull_messages(subscriber, subscription_path, max_messages=1)
+        assert len(received) == 1
+        assert _source_url(received[0]) == "https://example.com/new"
 
-        assert publisher.published_events == []
-        dedup.release.assert_not_called()
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_全件成功時は各記事をpublishしマーカーを解放しない(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = _fetched([_item(1), _item(2)])
-        mock_ulid.return_value = "01ABC"
-
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = _summarizer()
-        publisher = MagicMock()
-
-        _fetch_and_publish(dedup, summarizer, publisher)
-
-        assert publisher.publish.call_count == 2
-        dedup.release.assert_not_called()
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_イベントに要約とタグを載せる(self, mock_ulid, mock_fetch_all):
-        mock_fetch_all.return_value = _fetched([_item(1)])
-        mock_ulid.return_value = "01ABC"
-
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = _summarizer(summary="要約テキスト", tags=["ai", "compute"])
-        publisher = MagicMock()
-
-        _fetch_and_publish(dedup, summarizer, publisher)
-
-        event = publisher.publish.call_args[0][0]
-        assert event.article_id == "01ABC"
-        assert event.summary == "要約テキスト"
-        assert event.tags == ["ai", "compute"]
-        assert event.title == "Article 1"
-        assert event.body == "body1"
-
-    @patch("newsfeed.runner.fetch_all")
-    def test_取得記事が0件のとき要約も配信も行われず正常終了する(self, mock_fetch_all):
-        mock_fetch_all.return_value = _fetched([])
-
-        dedup = MagicMock()
-        summarizer = _summarizer()
-        publisher = MagicMock()
-
-        _fetch_and_publish(dedup, summarizer, publisher)
-
-        summarizer.summarize.assert_not_called()
-        publisher.publish.assert_not_called()
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_一部のソース取得に失敗したとき成功分をpublishした上でジョブを失敗させる(
-        self, mock_ulid, mock_fetch_all,
+    def test_処理済みと未処理が両方取得できたとき未処理の記事のイベントのみ配信される(
+        self, redis_client, pubsub_emulator, pubsub_topic,
     ):
-        mock_fetch_all.return_value = _fetched([_item(1)], failed_sources=["azure", "oci"])
-        mock_ulid.return_value = "01ABC"
+        project_id, topic_name, subscription_path = pubsub_topic
+        dedup = DedupStore(redis_client)
+        dedup.reserve("https://example.com/seen")
+        publisher = ArticlePublisher(project_id, topic_name, client=pubsub_emulator.get_publisher_client())
+        fetched = FetchResult(
+            items=[
+                FetchedItem(source="aws", source_url="https://example.com/seen", title="Seen", body="body"),
+                FetchedItem(source="aws", source_url="https://example.com/new", title="New", body="body"),
+            ],
+            failed_sources=[],
+            malformed_entries=[],
+        )
 
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = _summarizer()
-        publisher = _RecordingPublisher()
+        with patch("newsfeed.runner.fetch_all", return_value=fetched):
+            run(cfg=_DUMMY_CFG, dedup=dedup, summarizer=_fixed_summarizer(), publisher=publisher)
 
-        with pytest.raises(JobFailedError, match="2 feed source\\(s\\) failed to fetch: azure, oci"):
-            _fetch_and_publish(dedup, summarizer, publisher)
+        subscriber = pubsub_emulator.get_subscriber_client()
+        received = _pull_messages(subscriber, subscription_path, max_messages=2)
+        assert len(received) == 1
+        assert _source_url(received[0]) == "https://example.com/new"
 
-        assert [e.source_url for e in publisher.published_events] == ["https://example.com/1"]
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_本文が空でスキップした記事があったとき残りをpublishした上でジョブを失敗させる(
-        self, mock_ulid, mock_fetch_all,
+    def test_記事の要約が失敗したときその記事は配信されず次に処理すると再び未処理として扱われる(
+        self, redis_client, pubsub_emulator, pubsub_topic,
     ):
-        mock_fetch_all.return_value = _fetched(
-            [_item(1)],
+        project_id, topic_name, subscription_path = pubsub_topic
+        dedup = DedupStore(redis_client)
+        publisher = ArticlePublisher(project_id, topic_name, client=pubsub_emulator.get_publisher_client())
+        fetched = FetchResult(
+            items=[FetchedItem(source="aws", source_url="https://example.com/fail", title="Fail", body="body")],
+            failed_sources=[],
+            malformed_entries=[],
+        )
+
+        with patch("newsfeed.runner.fetch_all", return_value=fetched), pytest.raises(JobFailedError):
+            run(cfg=_DUMMY_CFG, dedup=dedup, summarizer=_fixed_summarizer(raise_for_titles=frozenset({"Fail"})),
+                publisher=publisher)
+
+        subscriber = pubsub_emulator.get_subscriber_client()
+        _assert_no_message_published(subscriber, subscription_path)
+        assert dedup.reserve("https://example.com/fail") is True
+
+    def test_記事の配信が失敗したとき次に処理すると再び未処理として扱われる(self, redis_client, pubsub_emulator, pubsub_topic):
+        project_id, _topic_name, _subscription_path = pubsub_topic
+        dedup = DedupStore(redis_client)
+        failing_publisher = ArticlePublisher(
+            project_id, "topic-that-does-not-exist", client=pubsub_emulator.get_publisher_client(),
+        )
+        fetched = FetchResult(
+            items=[FetchedItem(source="aws", source_url="https://example.com/fail", title="Fail", body="body")],
+            failed_sources=[],
+            malformed_entries=[],
+        )
+
+        with patch("newsfeed.runner.fetch_all", return_value=fetched), pytest.raises(JobFailedError):
+            run(cfg=_DUMMY_CFG, dedup=dedup, summarizer=_fixed_summarizer(), publisher=failing_publisher)
+
+        assert dedup.reserve("https://example.com/fail") is True
+
+
+class Test処理失敗のジョブ終了:
+    def test_記事の要約または配信が1件以上失敗したとき全ての記事の処理を終えてから失敗件数を含む例外になる(
+        self, redis_client, pubsub_emulator, pubsub_topic,
+    ):
+        project_id, topic_name, subscription_path = pubsub_topic
+        dedup = DedupStore(redis_client)
+        publisher = ArticlePublisher(project_id, topic_name, client=pubsub_emulator.get_publisher_client())
+        fetched = FetchResult(
+            items=[
+                FetchedItem(source="aws", source_url="https://example.com/fail", title="Fail", body="body"),
+                FetchedItem(source="aws", source_url="https://example.com/ok", title="Ok", body="body"),
+            ],
+            failed_sources=[],
+            malformed_entries=[],
+        )
+
+        with patch("newsfeed.runner.fetch_all", return_value=fetched), \
+                pytest.raises(JobFailedError, match=re.escape("1 article(s) failed to process")):
+            run(cfg=_DUMMY_CFG, dedup=dedup, summarizer=_fixed_summarizer(raise_for_titles=frozenset({"Fail"})),
+                publisher=publisher)
+
+        subscriber = pubsub_emulator.get_subscriber_client()
+        received = _pull_messages(subscriber, subscription_path, max_messages=1)
+        assert len(received) == 1
+        assert _source_url(received[0]) == "https://example.com/ok"
+
+    def test_取得元の一部のソースが失敗し他から正常に取得できたとき正常な記事は配信され失敗件数を含む例外になる(
+        self, redis_client, pubsub_emulator, pubsub_topic,
+    ):
+        project_id, topic_name, subscription_path = pubsub_topic
+        dedup = DedupStore(redis_client)
+        publisher = ArticlePublisher(project_id, topic_name, client=pubsub_emulator.get_publisher_client())
+        fetched = FetchResult(
+            items=[FetchedItem(source="aws", source_url="https://example.com/ok", title="Ok", body="body")],
+            failed_sources=["azure"],
+            malformed_entries=[],
+        )
+
+        with patch("newsfeed.runner.fetch_all", return_value=fetched), \
+                pytest.raises(JobFailedError, match=re.escape("1 feed source(s) failed to fetch: azure")):
+            run(cfg=_DUMMY_CFG, dedup=dedup, summarizer=_fixed_summarizer(), publisher=publisher)
+
+        subscriber = pubsub_emulator.get_subscriber_client()
+        received = _pull_messages(subscriber, subscription_path, max_messages=1)
+        assert len(received) == 1
+        assert _source_url(received[0]) == "https://example.com/ok"
+
+    def test_本文が空で処理できなかった記事があったとき他の正常な記事は処理されつつ失敗件数を含む例外になる(
+        self, redis_client, pubsub_emulator, pubsub_topic,
+    ):
+        project_id, topic_name, subscription_path = pubsub_topic
+        dedup = DedupStore(redis_client)
+        publisher = ArticlePublisher(project_id, topic_name, client=pubsub_emulator.get_publisher_client())
+        fetched = FetchResult(
+            items=[FetchedItem(source="aws", source_url="https://example.com/ok", title="Ok", body="body")],
+            failed_sources=[],
             malformed_entries=[MalformedEntry(source="aws", title="Broken Article")],
         )
-        mock_ulid.return_value = "01ABC"
 
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = _summarizer()
-        publisher = _RecordingPublisher()
+        with patch("newsfeed.runner.fetch_all", return_value=fetched), \
+                pytest.raises(
+                    JobFailedError,
+                    match=re.escape("1 entry(ies) skipped for empty body: aws:Broken Article"),
+                ):
+            run(cfg=_DUMMY_CFG, dedup=dedup, summarizer=_fixed_summarizer(), publisher=publisher)
 
-        with pytest.raises(
-            JobFailedError,
-            match=r"1 entry\(ies\) skipped for empty body: aws:Broken Article",
-        ):
-            _fetch_and_publish(dedup, summarizer, publisher)
+        subscriber = pubsub_emulator.get_subscriber_client()
+        received = _pull_messages(subscriber, subscription_path, max_messages=1)
+        assert len(received) == 1
+        assert _source_url(received[0]) == "https://example.com/ok"
 
-        assert [e.source_url for e in publisher.published_events] == ["https://example.com/1"]
-
-    @patch("newsfeed.runner.fetch_all")
-    def test_全記事の本文が空で取得記事が0件のときジョブを失敗させる(self, mock_fetch_all):
-        mock_fetch_all.return_value = _fetched(
-            [],
-            malformed_entries=[
-                MalformedEntry(source="aws", title="Broken Article"),
-                MalformedEntry(source="azure", title="Another Broken Article"),
-            ],
-        )
-
-        dedup = MagicMock()
-        summarizer = _summarizer()
-        publisher = MagicMock()
-
-        with pytest.raises(
-            JobFailedError,
-            match=r"2 entry\(ies\) skipped for empty body: "
-                  r"aws:Broken Article, azure:Another Broken Article",
-        ):
-            _fetch_and_publish(dedup, summarizer, publisher)
-
-        publisher.publish.assert_not_called()
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_ソース取得失敗と本文が空の記事が同時にあるときどちらの原因もエラーに出る(
-        self, mock_ulid, mock_fetch_all,
+    def test_記事処理の失敗とソースの失敗と本文欠落が同時に起きたとき例外に全ての件数が含まれる(
+        self, redis_client, pubsub_emulator, pubsub_topic,
     ):
-        mock_fetch_all.return_value = _fetched(
-            [_item(1)],
+        project_id, topic_name, _subscription_path = pubsub_topic
+        dedup = DedupStore(redis_client)
+        publisher = ArticlePublisher(project_id, topic_name, client=pubsub_emulator.get_publisher_client())
+        fetched = FetchResult(
+            items=[FetchedItem(source="aws", source_url="https://example.com/fail", title="Fail", body="body")],
             failed_sources=["azure"],
             malformed_entries=[MalformedEntry(source="aws", title="Broken Article")],
         )
-        mock_ulid.return_value = "01ABC"
 
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = _summarizer()
-        publisher = MagicMock()
+        with patch("newsfeed.runner.fetch_all", return_value=fetched), pytest.raises(JobFailedError) as excinfo:
+            run(cfg=_DUMMY_CFG, dedup=dedup, summarizer=_fixed_summarizer(raise_for_titles=frozenset({"Fail"})),
+                publisher=publisher)
 
-        with pytest.raises(JobFailedError) as excinfo:
-            _fetch_and_publish(dedup, summarizer, publisher)
+        message = str(excinfo.value)
+        assert "1 feed source(s) failed to fetch: azure" in message
+        assert "1 entry(ies) skipped for empty body: aws:Broken Article" in message
+        assert "1 article(s) failed to process" in message
 
-        assert "1 feed source(s) failed to fetch: azure" in str(excinfo.value)
-        assert "1 entry(ies) skipped for empty body: aws:Broken Article" in str(excinfo.value)
-
-    @patch("newsfeed.runner.fetch_all")
-    @patch("newsfeed.runner.ULID")
-    def test_ソース取得と記事処理が両方失敗したときどちらの原因もエラーに出る(
-        self, mock_ulid, mock_fetch_all,
+    def test_取得元の全てのソースが失敗したとき記事の処理を1件も行う前に取得自体の失敗を理由とする例外になる(
+        self, redis_client, pubsub_emulator, pubsub_topic,
     ):
-        mock_fetch_all.return_value = _fetched([_item(1)], failed_sources=["azure"])
-        mock_ulid.return_value = "01ABC"
+        project_id, topic_name, subscription_path = pubsub_topic
+        dedup = DedupStore(redis_client)
+        publisher = ArticlePublisher(project_id, topic_name, client=pubsub_emulator.get_publisher_client())
 
-        dedup = MagicMock()
-        dedup.reserve.return_value = True
-        summarizer = _summarizer()
-        publisher = MagicMock()
-        publisher.publish.side_effect = PublishError("pubsub down")
+        with patch("newsfeed.runner.fetch_all", side_effect=FetchError("all sources failed")), \
+                pytest.raises(FetchError):
+            run(cfg=_DUMMY_CFG, dedup=dedup, summarizer=_fixed_summarizer(), publisher=publisher)
 
-        with pytest.raises(JobFailedError) as excinfo:
-            _fetch_and_publish(dedup, summarizer, publisher)
+        subscriber = pubsub_emulator.get_subscriber_client()
+        _assert_no_message_published(subscriber, subscription_path)
 
-        assert "1 feed source(s) failed to fetch: azure" in str(excinfo.value)
-        assert "1 article(s) failed to process" in str(excinfo.value)
+    def test_ソースの失敗も記事処理の失敗も本文欠落エントリも無かったとき例外を送出せずに終了する(
+        self, redis_client, pubsub_emulator, pubsub_topic,
+    ):
+        project_id, topic_name, subscription_path = pubsub_topic
+        dedup = DedupStore(redis_client)
+        publisher = ArticlePublisher(project_id, topic_name, client=pubsub_emulator.get_publisher_client())
+        fetched = FetchResult(
+            items=[FetchedItem(source="aws", source_url="https://example.com/ok", title="Ok", body="body")],
+            failed_sources=[],
+            malformed_entries=[],
+        )
+
+        with patch("newsfeed.runner.fetch_all", return_value=fetched):
+            run(cfg=_DUMMY_CFG, dedup=dedup, summarizer=_fixed_summarizer(), publisher=publisher)
+
+        subscriber = pubsub_emulator.get_subscriber_client()
+        received = _pull_messages(subscriber, subscription_path, max_messages=1)
+        assert len(received) == 1
+
+
+class Test環境変数からの設定読み込み:
+    @pytest.mark.parametrize(
+        "env, missing_var",
+        [
+            pytest.param({}, "GOOGLE_CLOUD_PROJECT", id="GOOGLE_CLOUD_PROJECTが未設定のとき"),
+            pytest.param(
+                {"GOOGLE_CLOUD_PROJECT": "test-project"},
+                "VERTEX_LOCATION",
+                id="GOOGLE_CLOUD_PROJECTのみ設定されVERTEX_LOCATIONが未設定のとき",
+            ),
+            pytest.param(
+                {"GOOGLE_CLOUD_PROJECT": "test-project", "VERTEX_LOCATION": "us-central1"},
+                "NEWS_ARTICLE_COLLECTED_TOPIC",
+                id="GOOGLE_CLOUD_PROJECTとVERTEX_LOCATIONのみ設定されNEWS_ARTICLE_COLLECTED_TOPICが未設定のとき",
+            ),
+            pytest.param(
+                {**_REQUIRED_ENV, "APP_ENV": "local"},
+                "UPSTASH_REDIS_URL",
+                id="APP_ENVがlocalでUPSTASH_REDIS_URLが未設定のとき",
+            ),
+        ],
+    )
+    def test_設定を指定せず必須の環境変数が未設定のとき未設定の環境変数名を理由とするエラーになる(self, env, missing_var):
+        with patch.dict(os.environ, env, clear=True), pytest.raises(ValueError, match=missing_var):
+            run()
+
+
+class Test実接続の組み立て:
+    def test_重複排除の予約先と配信先を指定しないとき設定の接続情報に基づいて重複排除の予約と記事の配信が実際に行われる(
+        self, monkeypatch, redis_client, valkey_url, pubsub_emulator, pubsub_topic,
+    ):
+        project_id, topic_name, subscription_path = pubsub_topic
+        monkeypatch.setenv("PUBSUB_EMULATOR_HOST", pubsub_emulator.get_pubsub_emulator_host())
+        cfg = Config(
+            google_cloud_project=project_id,
+            redis_url=valkey_url,
+            vertex_location="us-central1",
+            news_article_collected_topic=topic_name,
+        )
+        fetched = FetchResult(
+            items=[FetchedItem(source="aws", source_url="https://example.com/wired", title="Wired", body="body")],
+            failed_sources=[],
+            malformed_entries=[],
+        )
+
+        with patch("newsfeed.runner.fetch_all", return_value=fetched):
+            run(cfg=cfg, summarizer=_fixed_summarizer())
+
+        assert redis_client.keys("*") != []
+        subscriber = pubsub_emulator.get_subscriber_client()
+        received = _pull_messages(subscriber, subscription_path, max_messages=1)
+        assert len(received) == 1
+        assert _source_url(received[0]) == "https://example.com/wired"
